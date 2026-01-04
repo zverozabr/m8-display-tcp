@@ -1,0 +1,22 @@
+
+
+
+ INST. 03
+
+ TYPE    FMSYNTH       LOAD SAVE  T>120
+ NAME    7 -----  ---
+ TRANSP. ON   TBL.TIC 01   EQ --  1 ---
+                                  2 ---
+ ALGO    00 >B>C>D                3 ---
+         A SIN B SIN C SIN D SIN  4 C#6
+ RATIO   0  00 01.00 01.00 01.00  5 ---
+ LEV/FB  80 00 80/00 80/00 80/00  6 ---
+ MOD     ----- ----- ----- -----  7 ---
+         ----- ----- ----- -----  8 ---
+ MOD1    00        AMP DC
+ MOD2    0         LIM 0
+ MOD3    0         PAN 80
+ MOD4    0         DRY C0
+ FILTER  0 OFF     CHO 00            M
+ CUTOFF  FF        DEL 0          SCPIT
+ RES     00        REV 0             V

@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>M8 Display</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+            font-family: monospace;
+        }
+        #header {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 8px;
+            color: #888;
+            font-size: 12px;
+        }
+        #status {
+            padding: 3px 10px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        #status.connected { background: #0a3; color: #fff; }
+        #status.disconnected { background: #a00; color: #fff; }
+        #audio-btn {
+            padding: 4px 10px;
+            background: #222;
+            border: 1px solid #444;
+            color: #888;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        #audio-btn:hover, #reset-btn:hover { background: #333; }
+        #audio-btn.active { background: #0a3; color: #fff; border-color: #0f0; }
+        #reset-btn {
+            padding: 4px 10px;
+            background: #222;
+            border: 1px solid #444;
+            color: #888;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        #reset-btn.loading { opacity: 0.5; cursor: wait; }
+
+        /* M8 Screen Canvas */
+        #screen-container {
+            background: #000;
+            border: 2px solid #222;
+            border-radius: 4px;
+            padding: 4px;
+        }
+        #screen {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+
+        /* Controls */
+        #controls {
+            display: flex;
+            gap: 20px;
+            margin-top: 15px;
+            align-items: center;
+        }
+        .dpad {
+            display: grid;
+            grid-template-columns: repeat(3, 32px);
+            grid-template-rows: repeat(3, 32px);
+            gap: 2px;
+        }
+        .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: #888;
+            font-size: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            user-select: none;
+            height: 32px;
+            min-width: 32px;
+            padding: 0 8px;
+        }
+        .btn:hover { background: #2a2a2a; color: #aaa; }
+        .btn:active, .btn.active { background: #0a3; color: #fff; border-color: #0f0; }
+        .btn.hidden { visibility: hidden; }
+        .action-btns {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .action-btns .btn { height: 28px; font-size: 9px; }
+        #info {
+            margin-top: 12px;
+            font-size: 10px;
+            color: #444;
+            text-align: center;
+        }
+        #state-info {
+            margin-top: 8px;
+            font-size: 10px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <span>M8</span>
+        <span id="status" class="disconnected">⚫</span>
+        <button id="audio-btn" onclick="toggleAudio()">🔇</button>
+        <button id="reset-btn" onclick="resetUsb()">🔄</button>
+    </div>
+
+    <div id="screen-container">
+        <canvas id="screen" width="320" height="240"></canvas>
+    </div>
+
+    <div id="controls">
+        <div class="dpad">
+            <div class="btn hidden"></div>
+            <div class="btn" data-key="up">▲</div>
+            <div class="btn hidden"></div>
+            <div class="btn" data-key="left">◀</div>
+            <div class="btn hidden"></div>
+            <div class="btn" data-key="right">▶</div>
+            <div class="btn hidden"></div>
+            <div class="btn" data-key="down">▼</div>
+            <div class="btn hidden"></div>
+        </div>
+        <div class="action-btns">
+            <div class="btn" data-key="shift">SHIFT</div>
+            <div class="btn" data-key="start">PLAY</div>
+        </div>
+        <div class="action-btns">
+            <div class="btn" data-key="opt">OPT</div>
+            <div class="btn" data-key="edit">EDIT</div>
+        </div>
+    </div>
+
+    <div id="info">↑↓←→ Shift Space Z X</div>
+    <div id="state-info"></div>
+
+    <script>
+        const canvas = document.getElementById('screen');
+        const ctx = canvas.getContext('2d');
+        const status = document.getElementById('status');
+        const audioBtn = document.getElementById('audio-btn');
+        const stateInfo = document.getElementById('state-info');
+
+        // 3 separate WebSocket channels (SOLID: Single Responsibility)
+        let controlWs = null;  // /control - input only
+        let screenWs = null;   // /screen - JPEG images (10 FPS)
+        let audioWs = null;    // /audio - PCM audio
+        let audioCtx = null;
+        let audioPlaying = false;
+        let currentState = null;
+
+        // Key mapping
+        const keyMap = {
+            ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+            ShiftLeft: 'shift', ShiftRight: 'shift',
+            Space: 'start', KeyZ: 'opt', KeyX: 'edit'
+        };
+
+        // Connect to control channel (input only)
+        function connectControl() {
+            controlWs = new WebSocket(`ws://${location.host}/control`);
+
+            controlWs.onopen = () => {
+                status.textContent = '🟢';
+                status.className = 'connected';
+            };
+
+            controlWs.onclose = () => {
+                status.textContent = '⚫';
+                status.className = 'disconnected';
+                setTimeout(connectControl, 2000);
+            };
+
+            controlWs.onerror = () => controlWs.close();
+        }
+
+        // Connect to screen channel (JPEG images at 10 FPS)
+        function connectScreen() {
+            screenWs = new WebSocket(`ws://${location.host}/screen`);
+            screenWs.binaryType = 'blob';
+
+            screenWs.onmessage = (event) => {
+                // Binary JPEG from server
+                const url = URL.createObjectURL(event.data);
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0);
+                    URL.revokeObjectURL(url);
+                };
+                img.src = url;
+            };
+
+            screenWs.onclose = () => setTimeout(connectScreen, 2000);
+            screenWs.onerror = () => screenWs.close();
+        }
+
+        // Connect all channels
+        function connect() {
+            connectControl();
+            connectScreen();
+        }
+
+        function updateStateInfo() {
+            if (currentState) {
+                stateInfo.textContent = `${currentState.screen} ${currentState.number.toString(16).toUpperCase().padStart(2,'0')} R${currentState.row} C${currentState.col}`;
+            }
+        }
+
+        // DRY: Single function for all input methods (keyboard & UI)
+        let shiftHeld = false;
+
+        function sendInput(key) {
+            // Use control WebSocket for low-latency input
+            if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
+                console.warn('Control WebSocket not ready, input dropped:', key);
+                return;
+            }
+
+            if (shiftHeld && key !== 'shift') {
+                // Send combo via WebSocket
+                controlWs.send(JSON.stringify({type: 'keys', hold: 'shift', press: key}));
+            } else {
+                // Send single key via WebSocket
+                controlWs.send(JSON.stringify({type: 'key', key}));
+            }
+        }
+
+        // Legacy sendKey for compatibility
+        function sendKey(key) {
+            sendInput(key);
+        }
+
+        // Audio streaming
+        function toggleAudio() {
+            if (audioPlaying) {
+                stopAudio();
+            } else {
+                startAudio();
+            }
+        }
+
+        async function startAudio() {
+            try {
+                audioCtx = new AudioContext({ sampleRate: 44100 });
+                audioWs = new WebSocket(`ws://${location.host}/audio`);
+                audioWs.binaryType = 'arraybuffer';
+
+                audioWs.onopen = () => {
+                    audioPlaying = true;
+                    audioBtn.textContent = '🔊';
+                    audioBtn.classList.add('active');
+                };
+
+                audioWs.onmessage = async (e) => {
+                    const data = new Uint8Array(e.data);
+                    if (data.length < 2) return;
+
+                    const msgType = data[0];
+                    const payload = data.slice(1);
+
+                    // 0x01 = Control/Error message (JSON)
+                    if (msgType === 0x01) {
+                        try {
+                            const msg = JSON.parse(new TextDecoder().decode(payload));
+                            if (msg.error) {
+                                audioBtn.textContent = '❌';
+                                audioBtn.title = msg.error;
+                                console.error('Audio:', msg.error);
+                            }
+                        } catch { /* ignore parse errors */ }
+                        return;
+                    }
+
+                    // 0x00 = Audio data (PCM)
+                    if (msgType === 0x00) {
+                        if (audioCtx.state === 'suspended') {
+                            await audioCtx.resume();
+                        }
+                        playAudioChunk(payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength));
+                    }
+                };
+
+                audioWs.onclose = () => stopAudio();
+                audioWs.onerror = () => stopAudio();
+            } catch (e) {
+                console.error('Audio error:', e);
+                stopAudio();
+            }
+        }
+
+        let nextPlayTime = 0;
+        let partialSample = null;
+
+        function playAudioChunk(data) {
+            let chunk = new Uint8Array(data);
+
+            // Handle partial samples from previous chunk
+            if (partialSample) {
+                const combined = new Uint8Array(partialSample.length + chunk.length);
+                combined.set(partialSample);
+                combined.set(chunk, partialSample.length);
+                chunk = combined;
+                partialSample = null;
+            }
+
+            // Save remainder (stereo S16_LE = 4 bytes per sample frame)
+            const remainder = chunk.length % 4;
+            if (remainder) {
+                partialSample = chunk.slice(-remainder);
+                chunk = chunk.slice(0, -remainder);
+            }
+
+            if (!chunk.length) return;
+
+            // Convert to Int16Array
+            const samples = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.length / 2);
+            const floats = new Float32Array(samples.length);
+            for (let i = 0; i < samples.length; i++) {
+                floats[i] = samples[i] / 32768;
+            }
+
+            const buffer = audioCtx.createBuffer(2, floats.length / 2, audioCtx.sampleRate);
+            const left = buffer.getChannelData(0);
+            const right = buffer.getChannelData(1);
+
+            for (let i = 0; i < floats.length / 2; i++) {
+                left[i] = floats[i * 2];
+                right[i] = floats[i * 2 + 1];
+            }
+
+            const source = audioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioCtx.destination);
+
+            // Schedule with proper timing to avoid gaps/glitches
+            const now = audioCtx.currentTime;
+            if (nextPlayTime < now) nextPlayTime = now + 0.05;
+            source.start(nextPlayTime);
+            nextPlayTime += buffer.duration;
+        }
+
+        function stopAudio() {
+            audioPlaying = false;
+            audioBtn.textContent = '🔇';
+            audioBtn.classList.remove('active');
+            audioBtn.title = '';
+            nextPlayTime = 0;
+            partialSample = null;
+            if (audioWs) { audioWs.close(); audioWs = null; }
+            if (audioCtx) { audioCtx.close(); audioCtx = null; }
+        }
+
+        // USB Reset
+        async function resetUsb() {
+            const resetBtn = document.getElementById('reset-btn');
+            resetBtn.classList.add('loading');
+            resetBtn.textContent = '⏳';
+            try {
+                const res = await fetch('/api/usb/reset', { method: 'POST' });
+                const data = await res.json();
+                resetBtn.textContent = data.ok ? '✅' : '❌';
+                setTimeout(() => { resetBtn.textContent = '🔄'; }, 2000);
+            } catch (e) {
+                resetBtn.textContent = '❌';
+                setTimeout(() => { resetBtn.textContent = '🔄'; }, 2000);
+            }
+            resetBtn.classList.remove('loading');
+        }
+
+        // Keyboard handling with combo support
+        document.addEventListener('keydown', (e) => {
+            if (e.repeat) return;
+
+            // Track shift modifier
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                shiftHeld = true;
+                document.querySelector('[data-key="shift"]')?.classList.add('active');
+                return;
+            }
+
+            const key = keyMap[e.code];
+            if (key) {
+                e.preventDefault();
+                sendInput(key);  // Uses shiftHeld for combo
+                document.querySelector(`[data-key="${key}"]`)?.classList.add('active');
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            // Release shift modifier
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                shiftHeld = false;
+                document.querySelector('[data-key="shift"]')?.classList.remove('active');
+                return;
+            }
+
+            const key = keyMap[e.code];
+            if (key) {
+                document.querySelector(`[data-key="${key}"]`)?.classList.remove('active');
+            }
+        });
+
+        // Touch/click handling with combo support (DRY: uses sendInput)
+        document.querySelectorAll('[data-key]').forEach(btn => {
+            const key = btn.dataset.key;
+
+            const handleDown = (e) => {
+                e.preventDefault();
+                if (key === 'shift') {
+                    shiftHeld = true;
+                } else {
+                    sendInput(key);  // DRY: same function as keyboard
+                }
+                btn.classList.add('active');
+            };
+
+            const handleUp = () => {
+                if (key === 'shift') {
+                    shiftHeld = false;
+                }
+                btn.classList.remove('active');
+            };
+
+            btn.addEventListener('mousedown', handleDown);
+            btn.addEventListener('mouseup', handleUp);
+            btn.addEventListener('mouseleave', handleUp);
+            btn.addEventListener('touchstart', handleDown);
+            btn.addEventListener('touchend', handleUp);
+        });
+
+        // Init - just connect WebSockets (no renderer needed, JPEG images)
+        connect();
+    </script>
+</body>
+</html>

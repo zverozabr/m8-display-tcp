@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head><title>WS Test</title></head>
+<body style="background:#000;color:#0f0;font-family:monospace;padding:20px;">
+<h3>WebSocket Test</h3>
+<pre id="log"></pre>
+<script>
+const log = s => document.getElementById('log').textContent += s + '\n';
+log('Testing WebSocket connections...');
+
+// Test /control
+const control = new WebSocket(`ws://${location.host}/control`);
+control.onopen = () => log('CONTROL: connected');
+control.onclose = () => log('CONTROL: closed');
+control.onerror = e => log('CONTROL error: ' + e.type);
+
+// Test /screen
+const screen = new WebSocket(`ws://${location.host}/screen`);
+screen.onopen = () => log('SCREEN: connected');
+screen.onmessage = e => log('SCREEN msg: ' + e.data.substring(0,50));
+screen.onclose = () => log('SCREEN: closed');
+screen.onerror = e => log('SCREEN error: ' + e.type);
+
+log('WebSocket objects created, waiting...');
+</script>
+</body>
+</html>

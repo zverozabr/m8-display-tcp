@@ -284,3 +284,38 @@ test.describe("WebSocket Protocol", () => {
     }
   });
 });
+
+test.describe("Screen and Keys Integration", () => {
+  test("canvas updates after key press", async ({ page }) => {
+    await page.goto(BASE_URL);
+    await expect(page.locator("#status")).toHaveClass(/connected/, { timeout: 5000 });
+
+    // Wait for initial screen render
+    await page.waitForTimeout(2000);
+
+    // Get canvas element
+    const canvas = page.locator("#screen");
+    await expect(canvas).toBeVisible();
+
+    // Take screenshot before
+    const beforeImg = await canvas.screenshot();
+
+    // Press DOWN key multiple times
+    for (let i = 0; i < 5; i++) {
+      await page.keyboard.press("ArrowDown");
+      await page.waitForTimeout(100);
+    }
+
+    // Wait for screen update
+    await page.waitForTimeout(1000);
+
+    // Take screenshot after
+    const afterImg = await canvas.screenshot();
+
+    // Compare screenshots - they should be different (cursor moved)
+    const beforeBase64 = beforeImg.toString('base64');
+    const afterBase64 = afterImg.toString('base64');
+
+    expect(beforeBase64).not.toBe(afterBase64);
+  });
+});

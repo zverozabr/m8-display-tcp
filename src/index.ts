@@ -169,9 +169,9 @@ if (tcpProxy) {
 }
 
 // Try to connect to M8 (will auto-reconnect if fails)
+// Note: enable() is called in onConnect callback, don't call it here
 try {
   await connection.connect();
-  await connection.enable();
 } catch {
   console.log("Waiting for M8 to connect...");
 }

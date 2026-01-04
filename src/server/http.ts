@@ -166,19 +166,24 @@ export class M8Server {
   /**
    * Start JPEG broadcast interval (10 FPS = 100ms)
    */
+  private jpegCount = 0;
   private startJpegBroadcast(): void {
     this.jpegBroadcastInterval = setInterval(async () => {
       if (this.screenClients.size === 0 || !this.framebuffer) return;
 
       try {
         const jpeg = await this.framebuffer.toJPEG(70);
+        this.jpegCount++;
+        if (this.jpegCount % 50 === 0) {
+          console.log(`JPEG broadcast #${this.jpegCount}, size=${jpeg.length}, clients=${this.screenClients.size}`);
+        }
         for (const ws of this.screenClients) {
           if (ws.readyState === ws.OPEN) {
             ws.send(jpeg);
           }
         }
       } catch (err) {
-        // Ignore encoding errors
+        console.error("JPEG broadcast error:", err);
       }
     }, 100);
   }
@@ -589,6 +594,7 @@ export class M8Server {
   private async handleWsMessage(ws: WebSocket, message: string): Promise<void> {
     try {
       const data = JSON.parse(message);
+      console.log("WS message:", data.type, data.key || data.press || "");
 
       switch (data.type) {
         case "key":
@@ -625,6 +631,7 @@ export class M8Server {
    */
   private async pressKey(key: M8KeyName): Promise<void> {
     const bitmask = keyToBitmask(key);
+    console.log("pressKey:", key, "bitmask:", bitmask);
     await this.connection.sendKeys(bitmask);
     await this.delay(50);
     await this.connection.sendKeys(0);

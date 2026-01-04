@@ -104,6 +104,13 @@ export class M8Connection {
         {
           path: port,
           baudRate: this.options.baudRate,
+          dataBits: 8,
+          parity: "none",
+          stopBits: 1,
+          rtscts: false,  // No flow control
+          xon: false,
+          xoff: false,
+          xany: false,
         },
         (err) => {
           if (err) {
@@ -250,9 +257,16 @@ export class M8Connection {
       this.serial!.write(Buffer.from(data), (err) => {
         if (err) {
           reject(err);
-        } else {
-          resolve();
+          return;
         }
+        // Drain to ensure data is sent
+        this.serial!.drain((drainErr) => {
+          if (drainErr) {
+            reject(drainErr);
+          } else {
+            resolve();
+          }
+        });
       });
     });
   }
@@ -288,9 +302,12 @@ export class M8Connection {
 
   /**
    * Enable M8 display
+   * Must send 'E' first, wait 500ms, then 'R' (as in m8c)
    */
   async enable(): Promise<void> {
-    await this.sendRaw(new Uint8Array([0x45, 0x52])); // 'E' + 'R'
+    await this.sendRaw(new Uint8Array([0x45])); // 'E'
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await this.sendRaw(new Uint8Array([0x52])); // 'R'
   }
 
   /**

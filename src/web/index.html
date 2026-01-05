@@ -162,7 +162,7 @@
 
         // 3 separate WebSocket channels (SOLID: Single Responsibility)
         let controlWs = null;  // /control - input only
-        let screenWs = null;   // /screen - JPEG images (10 FPS)
+        let screenWs = null;   // /screen - BMP images (10 FPS)
         let audioWs = null;    // /audio - PCM audio
         let audioCtx = null;
         let audioPlaying = false;
@@ -193,13 +193,13 @@
             controlWs.onerror = () => controlWs.close();
         }
 
-        // Connect to screen channel (JPEG images at 10 FPS)
+        // Connect to screen channel (BMP images at 10 FPS)
         function connectScreen() {
             screenWs = new WebSocket(`ws://${location.host}/screen`);
             screenWs.binaryType = 'blob';
 
             screenWs.onmessage = (event) => {
-                // Binary JPEG from server
+                // Binary BMP from server (browsers support BMP via createImageBitmap)
                 const url = URL.createObjectURL(event.data);
                 const img = new Image();
                 img.onload = () => {
@@ -447,7 +447,7 @@
             btn.addEventListener('touchend', handleUp);
         });
 
-        // Init - just connect WebSockets (no renderer needed, JPEG images)
+        // Init - connect WebSockets (BMP images rendered via createObjectURL)
         connect();
     </script>
 </body>

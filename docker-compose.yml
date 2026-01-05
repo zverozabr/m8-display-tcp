@@ -1,0 +1,31 @@
+# M8 Display Server - Docker Compose
+# Run: docker compose up -d
+
+services:
+  m8-display:
+    build: .
+    container_name: m8-display
+    restart: unless-stopped
+    ports:
+      # HTTP/WebSocket server
+      - "8080:8080"
+      # TCP proxy for remote m8c clients
+      - "3333:3333"
+    environment:
+      - M8_HTTP_PORT=8080
+      - M8_TCP_PORT=3333
+      # Auto-detect M8 serial port
+      - M8_SERIAL_PORT=
+      - M8_LOG_LEVEL=info
+    # USB device passthrough - M8 Teensy
+    # Note: Run `lsusb` to find your M8 device
+    # M8 VID:PID is 16c0:048a or 16c0:048b
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+    # Required for USB access
+    privileged: true
+    # Alternative to privileged (more secure):
+    # group_add:
+    #   - dialout
+    # device_cgroup_rules:
+    #   - 'c 166:* rmw'  # ttyACM devices

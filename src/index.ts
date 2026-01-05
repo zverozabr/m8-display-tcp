@@ -10,14 +10,15 @@ import { Framebuffer } from "./display/framebuffer";
 import { M8Server } from "./server/http";
 import { TcpProxy } from "./server/tcp-proxy";
 import type { ParsedCommand } from "./state/types";
+import { config } from "./config";
 
-// Parse CLI arguments
+// Parse CLI arguments (override ENV defaults)
 const { values } = parseArgs({
   args: process.argv.slice(2),
   options: {
-    port: { type: "string", short: "p", default: "" },
-    http: { type: "string", short: "h", default: "8080" },
-    "tcp-proxy": { type: "string", short: "t", default: "3333" },
+    port: { type: "string", short: "p", default: config.SERIAL_PORT },
+    http: { type: "string", short: "h", default: String(config.HTTP_PORT) },
+    "tcp-proxy": { type: "string", short: "t", default: String(config.TCP_PORT) },
     list: { type: "boolean", short: "l", default: false },
     help: { type: "boolean", default: false },
   },
@@ -33,15 +34,26 @@ Usage:
 
 Options:
   -p, --port <path>      Serial port (auto-detect if not specified)
-  -h, --http <port>      HTTP server port (default: 8080)
-  -t, --tcp-proxy <port> TCP proxy port for remote m8c (default: 3333, 0 to disable)
+  -h, --http <port>      HTTP server port (default: ${config.HTTP_PORT})
+  -t, --tcp-proxy <port> TCP proxy port for remote m8c (default: ${config.TCP_PORT}, 0 to disable)
   -l, --list             List available serial ports
   --help                 Show this help
+
+Environment Variables (overridden by CLI args):
+  M8_HTTP_PORT          HTTP server port (default: 8080)
+  M8_TCP_PORT           TCP proxy port (default: 3333, 0 to disable)
+  M8_SERIAL_PORT        Serial port (auto-detect if empty)
+  M8_BAUD_RATE          Serial baud rate (default: 115200)
+  M8_AUDIO_ENABLED      Enable audio streaming (default: true)
+  M8_AUTO_RECONNECT     Auto-reconnect on disconnect (default: true)
+  M8_RECONNECT_INTERVAL Reconnect interval in ms (default: 1000)
+  M8_LOG_LEVEL          Log level: debug, info, warn, error (default: info)
 
 Examples:
   npx tsx src/index.ts                           # HTTP:8080 + TCP:3333
   npx tsx src/index.ts -p /dev/ttyACM0           # Specific port
   npx tsx src/index.ts -t 0                      # Disable TCP proxy
+  M8_HTTP_PORT=9000 npx tsx src/index.ts         # HTTP:9000 via ENV
 `);
   process.exit(0);
 }
@@ -82,8 +94,9 @@ const tcpProxyPort = values["tcp-proxy"] ? parseInt(values["tcp-proxy"]) : 0;
 
 const connection = new M8Connection({
   port: serialPort,
-  autoReconnect: true,
-  reconnectInterval: 1000,
+  baudRate: config.BAUD_RATE,
+  autoReconnect: config.AUTO_RECONNECT,
+  reconnectInterval: config.RECONNECT_INTERVAL,
   onCommand: (cmd: ParsedCommand) => {
     // Debug: log command types (1% sample)
     if (Math.random() < 0.01) {

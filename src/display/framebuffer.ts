@@ -4,8 +4,6 @@
  */
 
 import type { Color, TextCommand, RectCommand, WaveCommand } from "../state/types";
-// @ts-ignore - sharp default export
-import sharp from "sharp";
 
 // M8 screen dimensions
 export const SCREEN_WIDTH = 320;
@@ -400,20 +398,5 @@ export class Framebuffer {
     }
 
     return bmp;
-  }
-
-  /**
-   * Convert to JPEG format (compressed, ~15-30KB)
-   */
-  async toJPEG(quality: number = 70): Promise<Buffer> {
-    return sharp(Buffer.from(this.pixels), {
-      raw: {
-        width: this.width,
-        height: this.height,
-        channels: 4,
-      },
-    })
-      .jpeg({ quality })
-      .toBuffer();
   }
 }

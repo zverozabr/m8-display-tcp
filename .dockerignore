@@ -1,0 +1,32 @@
+# Dependencies (will be installed in container)
+node_modules
+
+# Build artifacts
+dist
+*.tsbuildinfo
+
+# Tests
+tests
+*.test.ts
+e2e
+
+# Development
+.git
+.gitignore
+.env*
+*.md
+CLAUDE.md
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db

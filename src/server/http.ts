@@ -11,8 +11,8 @@ import { fileURLToPath } from "url";
 import type { M8Connection } from "../serial/connection";
 import type { TextBuffer } from "../display/buffer";
 import type { Framebuffer } from "../display/framebuffer";
-import { keyToBitmask, isValidKey, createCombo } from "../input/keys";
-import type { M8KeyName, ParsedCommand, M8Screen } from "../state/types";
+import { isValidKey } from "../input/keys";
+import type { ParsedCommand, M8Screen } from "../state/types";
 import { M8StateTracker } from "../state/tracker";
 import { AudioRecorder, getAudioDevices, findM8AudioDevice } from "../audio/capture";
 import { UsbAudioStreamer } from "../audio/usb-streamer";
@@ -31,6 +31,9 @@ import {
   type ResetResult
 } from "../usb/reset";
 import { spawn } from "child_process";
+import { createHealthRoute } from "./routes/health";
+import { createScreenRoutes } from "./routes/screen";
+import { createInputRoutes } from "./routes/input";
 
 // Get directory of this file for static serving
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -67,6 +70,9 @@ export class M8Server {
   private jpegBroadcastInterval: ReturnType<typeof setInterval> | null = null;
   private audioRecorder: AudioRecorder | null = null;
   private audioStreamer: UsbAudioStreamer;
+  private healthRoute: ReturnType<typeof createHealthRoute>;
+  private screenRoutes: ReturnType<typeof createScreenRoutes>;
+  private inputRoutes: ReturnType<typeof createInputRoutes>;
 
   constructor(options: M8ServerOptions) {
     this.connection = options.connection;
@@ -78,6 +84,20 @@ export class M8Server {
     this.audioStreamer = new UsbAudioStreamer({
       onAudioData: options.onAudioData,
       autoStart: !!options.onAudioData, // Start immediately for TCP clients
+    });
+
+    // Initialize routes (Dependency Injection)
+    this.healthRoute = createHealthRoute({
+      connection: this.connection,
+      getClientCount: () => this.clients.size,
+    });
+    this.screenRoutes = createScreenRoutes({
+      buffer: this.buffer,
+      framebuffer: this.framebuffer,
+    });
+    this.inputRoutes = createInputRoutes({
+      connection: this.connection,
+      stateTracker: this.stateTracker,
     });
   }
 
@@ -184,36 +204,37 @@ export class M8Server {
       console.log(`M8 Server running on http://localhost:${this.port}`);
     });
 
-    // Start JPEG broadcast to /screen clients (10 FPS)
-    this.startJpegBroadcast();
+    // Start BMP broadcast to /screen clients (10 FPS)
+    this.startScreenBroadcast();
   }
 
   /**
-   * Start JPEG broadcast interval (10 FPS = 100ms)
+   * Start BMP broadcast interval (10 FPS = 100ms)
+   * Uses BMP instead of JPEG to avoid sharp dependency
    */
-  private jpegCount = 0;
-  private startJpegBroadcast(): void {
-    this.jpegBroadcastInterval = setInterval(async () => {
+  private screenBroadcastCount = 0;
+  private startScreenBroadcast(): void {
+    this.jpegBroadcastInterval = setInterval(() => {
       if (this.screenClients.size === 0 || !this.framebuffer) return;
 
       try {
-        const jpeg = await this.framebuffer.toJPEG(70);
-        this.jpegCount++;
-        if (this.jpegCount % 50 === 0) {
-          console.log(`JPEG broadcast #${this.jpegCount}, size=${jpeg.length}, clients=${this.screenClients.size}`);
+        const bmp = this.framebuffer.toBMP();
+        this.screenBroadcastCount++;
+        if (this.screenBroadcastCount % 50 === 0) {
+          console.log(`Screen broadcast #${this.screenBroadcastCount}, size=${bmp.length}, clients=${this.screenClients.size}`);
         }
         const clients = [...this.screenClients];
         for (const ws of clients) {
           try {
             if (ws.readyState === ws.OPEN) {
-              ws.send(jpeg);
+              ws.send(Buffer.from(bmp));
             }
           } catch {
             // Ignore send errors
           }
         }
       } catch (err) {
-        console.error("JPEG broadcast error:", err);
+        console.error("Screen broadcast error:", err);
       }
     }, 100);
   }
@@ -274,113 +295,62 @@ export class M8Server {
 
     // GET /api/health
     if (path === "health" && method === "GET") {
-      this.json(res, {
-        connected: this.connection.isConnected(),
-        port: this.connection.getPort(),
-        clients: this.clients.size,
-      });
+      this.healthRoute.get(res);
       return;
     }
 
     // GET /api/screen
     if (path === "screen" && method === "GET") {
-      this.json(res, this.buffer.toJSON());
+      this.screenRoutes.getJson(res);
       return;
     }
 
     // GET /api/screen/text
     if (path === "screen/text" && method === "GET") {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end(this.buffer.toText());
+      this.screenRoutes.getText(res);
       return;
     }
 
     // POST /api/raw - Send raw bitmask (low-level direct control)
     if (path === "raw" && method === "POST") {
-      const body = await this.parseBody(req);
-      const { bitmask, holdMs, release } = body as { bitmask: number; holdMs?: number; release?: boolean };
-      if (typeof bitmask !== "number" || bitmask < 0 || bitmask > 255) {
-        this.json(res, { error: "Invalid bitmask (0-255)" }, 400);
-        return;
-      }
-      await this.connection.sendKeys(bitmask);
-      if (holdMs && holdMs > 0) {
-        await this.delay(holdMs);
-        if (release !== false) {
-          await this.connection.sendKeys(0);
-        }
-      }
-      this.json(res, { ok: true, bitmask, holdMs });
+      await this.inputRoutes.postRaw(req, res);
       return;
     }
 
     // GET /api/screen/image - Pixel-perfect M8 display
     if (path === "screen/image" && method === "GET") {
-      if (!this.framebuffer) {
-        this.json(res, { error: "Framebuffer not available" }, 500);
-        return;
-      }
-      const bmp = this.framebuffer.toBMP();
-      res.writeHead(200, {
-        "Content-Type": "image/bmp",
-        "Content-Length": bmp.length,
-        "Cache-Control": "no-cache",
-      });
-      res.end(Buffer.from(bmp));
+      this.screenRoutes.getImage(res);
       return;
     }
 
     // POST /api/key/:key
     if (path.startsWith("key/") && method === "POST") {
       const key = path.replace("key/", "");
-      if (!isValidKey(key)) {
-        this.json(res, { error: `Invalid key: ${key}` }, 400);
-        return;
-      }
-      await this.pressKey(key);
-      this.json(res, { ok: true, key });
+      await this.inputRoutes.postKey(res, key);
       return;
     }
 
     // POST /api/keys (combo)
     if (path === "keys" && method === "POST") {
-      const body = await this.parseBody(req);
-      const { hold, press } = body as { hold?: string; press?: string };
-
-      if (press && isValidKey(press)) {
-        if (hold && isValidKey(hold)) {
-          await this.pressCombo(hold, press);
-        } else {
-          await this.pressKey(press);
-        }
-        this.json(res, { ok: true, hold, press });
-        return;
-      }
-      this.json(res, { error: "Invalid keys" }, 400);
+      await this.inputRoutes.postKeys(req, res);
       return;
     }
 
     // POST /api/note
     if (path === "note" && method === "POST") {
-      const body = await this.parseBody(req);
-      const { note, vel } = body as { note: number; vel?: number };
-      await this.connection.sendNoteOn(note, vel ?? 100);
-      this.json(res, { ok: true, note, vel: vel ?? 100 });
+      await this.inputRoutes.postNote(req, res);
       return;
     }
 
     // POST /api/note/off
     if (path === "note/off" && method === "POST") {
-      await this.connection.sendNoteOff();
-      this.json(res, { ok: true });
+      await this.inputRoutes.postNoteOff(res);
       return;
     }
 
     // POST /api/reset
     if (path === "reset" && method === "POST") {
-      await this.connection.reset();
-      this.stateTracker.reset();
-      this.json(res, { ok: true });
+      await this.inputRoutes.postReset(res);
       return;
     }
 
@@ -629,16 +599,16 @@ export class M8Server {
       switch (data.type) {
         case "key":
           if (isValidKey(data.key)) {
-            await this.pressKey(data.key);
+            await this.inputRoutes.pressKey(data.key);
           }
           break;
 
         case "keys":
           if (data.press && isValidKey(data.press)) {
             if (data.hold && isValidKey(data.hold)) {
-              await this.pressCombo(data.hold, data.press);
+              await this.inputRoutes.pressCombo(data.hold, data.press);
             } else {
-              await this.pressKey(data.press);
+              await this.inputRoutes.pressKey(data.press);
             }
           }
           break;
@@ -654,34 +624,6 @@ export class M8Server {
     } catch (err) {
       console.error("WebSocket message error:", err);
     }
-  }
-
-  /**
-   * Press single key
-   */
-  private async pressKey(key: M8KeyName): Promise<void> {
-    const bitmask = keyToBitmask(key);
-    console.log("pressKey:", key, "bitmask:", bitmask);
-    await this.connection.sendKeys(bitmask);
-    await this.delay(50);
-    await this.connection.sendKeys(0);
-    // Update state tracker
-    this.stateTracker.onKey(key);
-  }
-
-  /**
-   * Press key combo
-   */
-  private async pressCombo(hold: M8KeyName, press: M8KeyName): Promise<void> {
-    const sequence = createCombo(hold, press);
-    for (const step of sequence) {
-      await this.connection.sendKeys(step.bitmask);
-      if (step.duration > 0) {
-        await this.delay(step.duration);
-      }
-    }
-    // Update state tracker
-    this.stateTracker.onCombo(hold, press);
   }
 
   /**

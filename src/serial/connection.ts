@@ -357,11 +357,20 @@ export class M8Connection {
 export async function findM8Device(): Promise<string | null> {
   const ports = await SerialPort.list();
 
+  // First pass: check by VID:PID (works on host with udev)
   for (const port of ports) {
     // M8 Teensy VID:PID = 16c0:048a or 16c0:048b
     if (port.vendorId === "16c0" && (port.productId === "048a" || port.productId === "048b")) {
       return port.path;
     }
+  }
+
+  // Fallback for Docker/containers where udev doesn't provide VID:PID
+  // Try /dev/ttyACM0 if it exists and has no vendorId (container environment)
+  const acmPort = ports.find(p => p.path === "/dev/ttyACM0" && !p.vendorId);
+  if (acmPort) {
+    console.log("Docker fallback: trying /dev/ttyACM0 without VID check");
+    return acmPort.path;
   }
 
   return null;

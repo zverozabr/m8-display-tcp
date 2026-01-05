@@ -33,9 +33,9 @@ class MockWebSocket {
   }
 }
 
-// Import after mocks (dynamic import to avoid hoisting issues)
-const { AudioHub } = await import("../src/audio/audio-hub");
-const { RingBuffer } = await import("../src/audio/ring-buffer");
+// Static imports (Bun doesn't support top-level await in tests)
+import { AudioHub } from "../src/audio/audio-hub";
+import { RingBuffer } from "../src/audio/ring-buffer";
 
 describe("RingBuffer", () => {
   let buffer: InstanceType<typeof RingBuffer>;

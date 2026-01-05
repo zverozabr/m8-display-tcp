@@ -16,8 +16,9 @@ import * as net from "net";
 
 export type RawDataCallback = (data: Uint8Array) => void;
 
-// Audio packet header: 'A' + 2-byte length (big endian)
-const AUDIO_HEADER = 0x41; // 'A'
+// Packet headers (all packets: header + 2-byte length BE + data)
+const DISPLAY_HEADER = 0x44; // 'D' - display/SLIP data
+const AUDIO_HEADER = 0x41;   // 'A' - audio PCM data
 
 export interface TcpProxyOptions {
   port: number;
@@ -116,12 +117,36 @@ export class TcpProxy {
 
   /**
    * Send data to all connected clients (M8 -> clients)
+   * Format: 'D' + 2-byte length (BE) + SLIP data
    */
+  private displayPacketCount = 0;
+  private displayLastLog = 0;
+
   broadcast(data: Uint8Array): void {
-    const buffer = Buffer.from(data);
+    if (this.clients.size === 0) return;
+
+    // Log display broadcast stats every 5 seconds
+    this.displayPacketCount++;
+    const now = Date.now();
+    if (now - this.displayLastLog > 5000) {
+      // Log first packet's header for debugging
+      const header = Buffer.allocUnsafe(3);
+      header[0] = DISPLAY_HEADER;  // Should be 0x44 = 'D'
+      header.writeUInt16BE(data.length, 1);
+      console.log(`[TcpProxy] Display: ${this.displayPacketCount} pkts, ${data.length} bytes/pkt, ${this.clients.size} clients, header: ${header[0].toString(16)} ${header[1].toString(16)} ${header[2].toString(16)}`);
+      this.displayPacketCount = 0;
+      this.displayLastLog = now;
+    }
+
+    // Create packet: 'D' + length (2 bytes BE) + data
+    const packet = Buffer.allocUnsafe(3 + data.length);
+    packet[0] = DISPLAY_HEADER;
+    packet.writeUInt16BE(data.length, 1);
+    Buffer.from(data).copy(packet, 3);
+
     for (const client of this.clients.values()) {
       try {
-        client.socket.write(buffer);
+        client.socket.write(packet);
       } catch (err) {
         console.error(`Error sending to ${client.address}:`, err);
       }
@@ -132,6 +157,9 @@ export class TcpProxy {
    * Send audio data to all connected clients
    * Format: 'A' + 2-byte length (BE) + PCM data
    */
+  private audioPacketCount = 0;
+  private audioLastLog = 0;
+
   broadcastAudio(pcmData: Buffer): void {
     if (!this.audioEnabled || this.clients.size === 0) return;
 
@@ -140,6 +168,15 @@ export class TcpProxy {
     packet[0] = AUDIO_HEADER;
     packet.writeUInt16BE(pcmData.length, 1);
     pcmData.copy(packet, 3);
+
+    // Log audio broadcast stats every 5 seconds
+    this.audioPacketCount++;
+    const now = Date.now();
+    if (now - this.audioLastLog > 5000) {
+      console.log(`[TcpProxy] Audio: ${this.audioPacketCount} pkts, ${pcmData.length} bytes/pkt, ${this.clients.size} clients`);
+      this.audioPacketCount = 0;
+      this.audioLastLog = now;
+    }
 
     for (const client of this.clients.values()) {
       try {

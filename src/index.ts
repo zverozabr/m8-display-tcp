@@ -85,6 +85,11 @@ const connection = new M8Connection({
   autoReconnect: true,
   reconnectInterval: 1000,
   onCommand: (cmd: ParsedCommand) => {
+    // Debug: log command types (1% sample)
+    if (Math.random() < 0.01) {
+      console.log(`[Cmd] type=${cmd.type}`);
+    }
+
     // Update text buffer
     if (cmd.type === "text") {
       buffer.applyText(cmd);
@@ -105,6 +110,13 @@ const connection = new M8Connection({
 
     // Forward to TCP proxy clients (legacy, for backward compatibility)
     if (tcpProxy) {
+      // Debug: log when we're sending display data
+      if (tcpProxy.getClientCount() > 0 && data.length > 0) {
+        // Only log occasionally to avoid spam
+        if (Math.random() < 0.01) {
+          console.log(`[Debug] onSerialData: ${data.length} bytes, ${tcpProxy.getClientCount()} clients`);
+        }
+      }
       tcpProxy.broadcast(data);
     }
   },
@@ -155,9 +167,8 @@ const server = new M8Server({
   connection,
   buffer,
   framebuffer,
-  // Stream audio to TCP clients (disabled - causes SLIP corruption)
-  // TODO: Use separate TCP port for audio or implement proper framing
-  onAudioData: undefined, // tcpProxy ? (data) => tcpProxy!.broadcastAudio(data) : undefined,
+  // Stream audio to TCP clients (enabled - uses 'A' + length framing)
+  onAudioData: tcpProxy ? (data) => tcpProxy!.broadcastAudio(data) : undefined,
 });
 
 // Start server (even if M8 not connected yet)

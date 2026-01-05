@@ -17,6 +17,8 @@ export class AudioHub {
   private ringBuffer: RingBuffer;
   private fileStream: WriteStream | null = null;
   private recording = false;
+  private audioPacketCount = 0;
+  private lastLogTime = 0;
 
   constructor(bufferSize = 256 * 1024) {
     this.ringBuffer = new RingBuffer(bufferSize, { allowOverwrite: true });
@@ -68,6 +70,15 @@ export class AudioHub {
 
     // Frame: [0x00] + PCM data
     const framed = Buffer.concat([Buffer.from([MSG_AUDIO]), data]);
+
+    // Log audio broadcast stats every 5 seconds
+    this.audioPacketCount++;
+    const now = Date.now();
+    if (now - this.lastLogTime > 5000 && this.clients.size > 0) {
+      console.log(`Audio broadcast: ${this.audioPacketCount} packets, ${data.length} bytes/pkt, ${this.clients.size} clients`);
+      this.audioPacketCount = 0;
+      this.lastLogTime = now;
+    }
 
     // Broadcast to all connected clients
     const dead: WebSocket[] = [];

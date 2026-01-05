@@ -6,10 +6,10 @@
 
 import type { WebSocket } from "ws";
 import {
-  NativeLibusbCapture,
   AUDIO_CONSTANTS,
   type IAudioCapture,
 } from "./native-capture";
+import { AlsaCapture } from "./alsa-capture";
 import { AudioHub } from "./audio-hub";
 
 export interface UsbAudioStreamerOptions {
@@ -35,10 +35,12 @@ export class UsbAudioStreamer {
     this.autoStart = options.autoStart ?? false;
     this.externalCallback = options.onAudioData ?? null;
 
+    console.log(`[UsbStreamer] External callback: ${options.onAudioData ? "SET" : "NOT SET"}`);
+
     this.hub = new AudioHub(AUDIO_CONSTANTS.RING_BUFFER_SIZE);
 
-    // Use native libusb capture (bypasses PipeWire/ALSA)
-    this.capture = new NativeLibusbCapture({
+    // Use ALSA capture via arecord (doesn't need root)
+    this.capture = new AlsaCapture({
       onData: (data) => {
         this.hub.onAudioData(data);
         // Also send to external callback (TCP)

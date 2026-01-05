@@ -68,9 +68,21 @@ export class M8Connection {
     this.slip = new SlipDecoder((frame) => this.handleFrame(frame));
   }
 
+  private frameCount = 0;
+  private frameLastLog = 0;
+
   private handleFrame(frame: Uint8Array): void {
     // Forward raw frame
     this.options.onRaw(frame);
+
+    // Debug: log frame stats
+    this.frameCount++;
+    const now = Date.now();
+    if (now - this.frameLastLog > 5000) {
+      console.log(`[SLIP] Frames: ${this.frameCount}, last ${frame.length} bytes`);
+      this.frameCount = 0;
+      this.frameLastLog = now;
+    }
 
     // Parse command
     const cmd = parseCommand(frame);
@@ -185,11 +197,24 @@ export class M8Connection {
     }
   }
 
+  private serialDataCount = 0;
+  private serialLastLog = 0;
+
   private setupListeners(): void {
     if (!this.serial) return;
 
     this.serial.on("data", (data: Buffer) => {
       const bytes = new Uint8Array(data);
+
+      // Debug: log serial data stats
+      this.serialDataCount++;
+      const now = Date.now();
+      if (now - this.serialLastLog > 5000) {
+        console.log(`[Serial] Received: ${this.serialDataCount} chunks, last ${data.length} bytes`);
+        this.serialDataCount = 0;
+        this.serialLastLog = now;
+      }
+
       // Forward raw serial data for TCP proxy
       this.options.onSerialData(bytes);
       // Feed to SLIP decoder

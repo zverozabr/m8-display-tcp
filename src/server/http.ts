@@ -89,7 +89,15 @@ export class M8Server {
       this.handleRequest(req, res);
     });
 
-    this.wss = new WebSocketServer({ server: this.server });
+    this.wss = new WebSocketServer({
+      server: this.server,
+      perMessageDeflate: false  // Disable compression - libwebsockets compatibility
+    });
+
+    // Global error handler to prevent server crash
+    this.wss.on("error", (err) => {
+      console.error("WebSocket server error:", err.message);
+    });
 
     this.wss.on("connection", (ws, req) => {
       // Extract pathname without query string
@@ -107,6 +115,10 @@ export class M8Server {
       if (path === "/display") {
         console.log("Display client connected");
         this.displayClients.add(ws);
+        ws.on("error", (err) => {
+          console.error("Display client error:", err.message);
+          this.displayClients.delete(ws);
+        });
         ws.on("close", () => {
           console.log("Display client disconnected");
           this.displayClients.delete(ws);
@@ -118,6 +130,10 @@ export class M8Server {
       if (path === "/control") {
         console.log("Control client connected");
         this.controlClients.add(ws);
+        ws.on("error", (err) => {
+          console.error("Control client error:", err.message);
+          this.controlClients.delete(ws);
+        });
         ws.on("message", (message) => {
           this.handleWsMessage(ws, message.toString());
         });
@@ -133,6 +149,10 @@ export class M8Server {
         console.log("Screen client connected (JPEG mode)");
         this.screenClients.add(ws);
         ws.binaryType = "nodebuffer";
+        ws.on("error", (err) => {
+          console.error("Screen client error:", err.message);
+          this.screenClients.delete(ws);
+        });
         ws.on("close", () => {
           console.log("Screen client disconnected");
           this.screenClients.delete(ws);
@@ -144,6 +164,11 @@ export class M8Server {
       const data: WebSocketData = { id: crypto.randomUUID() };
       this.clients.set(ws, data);
       console.log(`WebSocket connected (legacy /ws): ${data.id}`);
+
+      ws.on("error", (err) => {
+        console.error(`WebSocket error (${data.id}):`, err.message);
+        this.clients.delete(ws);
+      });
 
       ws.on("message", (message) => {
         this.handleWsMessage(ws, message.toString());
@@ -177,9 +202,14 @@ export class M8Server {
         if (this.jpegCount % 50 === 0) {
           console.log(`JPEG broadcast #${this.jpegCount}, size=${jpeg.length}, clients=${this.screenClients.size}`);
         }
-        for (const ws of this.screenClients) {
-          if (ws.readyState === ws.OPEN) {
-            ws.send(jpeg);
+        const clients = [...this.screenClients];
+        for (const ws of clients) {
+          try {
+            if (ws.readyState === ws.OPEN) {
+              ws.send(jpeg);
+            }
+          } catch {
+            // Ignore send errors
           }
         }
       } catch (err) {
@@ -659,9 +689,14 @@ export class M8Server {
    */
   broadcast(data: object): void {
     const message = JSON.stringify(data);
-    for (const [ws] of this.clients) {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(message);
+    const clients = [...this.clients];
+    for (const [ws] of clients) {
+      try {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(message);
+        }
+      } catch {
+        // Ignore send errors
       }
     }
   }
@@ -671,9 +706,15 @@ export class M8Server {
    * Used by m8c-websocket for clean binary streaming
    */
   broadcastDisplay(data: Uint8Array): void {
-    for (const ws of this.displayClients) {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(data);
+    // Snapshot to avoid "Set modified during iteration" race condition
+    const clients = [...this.displayClients];
+    for (const ws of clients) {
+      try {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(data);
+        }
+      } catch {
+        // Ignore send errors on closed connections
       }
     }
   }
@@ -723,9 +764,14 @@ export class M8Server {
     data[0] = 0x02; // Screen image type
     data.set(bmp, 1);
 
-    for (const [ws] of this.clients) {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(data);
+    const clients = [...this.clients];
+    for (const [ws] of clients) {
+      try {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(data);
+        }
+      } catch {
+        // Ignore send errors
       }
     }
   }

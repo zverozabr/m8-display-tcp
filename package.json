@@ -6,6 +6,7 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
+    "setup": "tsx src/cli/setup.ts",
     "test": "bun test tests/",
     "test:e2e": "playwright test e2e/"
   },

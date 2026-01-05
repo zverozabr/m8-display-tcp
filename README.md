@@ -14,29 +14,30 @@ Remote display and control server for [Dirtywave M8 Tracker](https://dirtywave.c
 
 ## Quick Start
 
-### Docker (Recommended)
-
 ```bash
-# Clone the repository
+# 1. Install
 git clone https://github.com/YOUR_USERNAME/m8-display.git
-cd m8-display
+cd m8-display && npm install
 
-# Start with Docker Compose
-docker compose up -d
+# 2. Check system (diagnoses issues, shows suggestions)
+npm run setup
 
-# Open in browser
+# 3. Start server
+npm start
+
+# 4. Open browser
 open http://localhost:8080
 ```
 
-### From Source
+### Docker
 
 ```bash
-# Requirements: Node.js 20+
-npm install
-npm start
-
-# With custom ports
-M8_HTTP_PORT=9000 M8_TCP_PORT=3334 npm start
+docker compose up -d
+# Or manually:
+docker run -d --name m8-display \
+  --network=host --privileged \
+  -v /dev:/dev \
+  m8-display:latest
 ```
 
 ## Requirements
@@ -101,6 +102,7 @@ Find your device: `ls -la /dev/ttyACM*` or `lsusb | grep 16c0`
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/health` | Connection status |
+| GET | `/api/health/detailed` | Full diagnostics + suggestions |
 | GET | `/api/screen` | Screen buffer (JSON) |
 | GET | `/api/screen/text` | Screen as text |
 | GET | `/api/screen/image` | Screen as BMP |
@@ -198,16 +200,56 @@ src/
     └── reset.ts       # USB reset utilities
 ```
 
+## Troubleshooting
+
+### M8 not detected
+
+```bash
+# Run diagnostics
+npm run setup
+
+# Check USB
+lsusb | grep 16c0
+ls -la /dev/ttyACM*
+
+# Check health API
+curl http://localhost:8080/api/health/detailed | jq
+```
+
+### Audio not working
+
+```bash
+# Install ALSA utils
+sudo apt-get install alsa-utils
+
+# Check M8 audio
+arecord -l | grep M8
+
+# Add to audio group
+sudo usermod -aG audio $USER && logout
+```
+
+### Docker issues
+
+```bash
+# Ensure devices are mounted
+docker exec m8-display ls -la /dev/ttyACM0
+docker exec m8-display arecord -l
+
+# Check logs
+docker logs m8-display
+```
+
 ## Development
 
 ```bash
 # Run with watch mode
 npm run dev
 
-# Run tests
+# Run tests (200+ unit tests)
 npm test
 
-# Run E2E tests
+# Run E2E tests (requires M8)
 npm run test:e2e
 ```
 

@@ -29,11 +29,13 @@ FROM node:20-slim AS runner
 
 WORKDIR /app
 
-# Install runtime dependencies for serialport and USB
+# Install runtime dependencies for serialport, USB, and ALSA audio
 RUN apt-get update && apt-get install -y \
     libudev-dev \
     libusb-1.0-0 \
     udev \
+    alsa-utils \
+    libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy node_modules and source from builder

@@ -22,10 +22,16 @@ services:
     # M8 VID:PID is 16c0:048a or 16c0:048b
     devices:
       - /dev/ttyACM0:/dev/ttyACM0
-    # Required for USB access
+      - /dev/snd:/dev/snd
+    volumes:
+      - /run/udev:/run/udev:ro
+    group_add:
+      - audio
+      - dialout
+    # Required for USB access (use ONE of these options):
+    # Option 1: privileged (easier but less secure)
     privileged: true
-    # Alternative to privileged (more secure):
-    # group_add:
-    #   - dialout
+    # Option 2: specific permissions (more secure, uncomment below and remove privileged)
     # device_cgroup_rules:
     #   - 'c 166:* rmw'  # ttyACM devices
+    #   - 'c 116:* rmw'  # ALSA devices

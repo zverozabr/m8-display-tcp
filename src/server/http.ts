@@ -9,6 +9,7 @@ import { readFile, unlink } from "fs/promises";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { M8Connection } from "../serial/connection";
+import { DeviceManager } from "../serial/device-manager";
 import type { TextBuffer } from "../display/buffer";
 import type { Framebuffer } from "../display/framebuffer";
 import { isValidKey } from "../input/keys";
@@ -75,6 +76,7 @@ export class M8Server {
   private screenRoutes: ReturnType<typeof createScreenRoutes>;
   private inputRoutes: ReturnType<typeof createInputRoutes>;
   private getDebugStats: (() => object) | null;
+  private deviceManager: DeviceManager;
 
   constructor(options: M8ServerOptions) {
     this.connection = options.connection;
@@ -83,6 +85,7 @@ export class M8Server {
     this.port = options.port ?? 8080;
     this.getDebugStats = options.getDebugStats ?? null;
     this.stateTracker = new M8StateTracker();
+    this.deviceManager = new DeviceManager(options.connection);
     // Auto-start audio if TCP streaming is enabled
     this.audioStreamer = new UsbAudioStreamer({
       onAudioData: options.onAudioData,
@@ -301,6 +304,64 @@ export class M8Server {
       this.healthRoute.get(res);
       return;
     }
+
+    // === Device Management Endpoints ===
+
+    // GET /api/ports - List available serial ports
+    if (path === "ports" && method === "GET") {
+      try {
+        const ports = await this.deviceManager.listPorts();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ports }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/port - Current port and connection status
+    if (path === "port" && method === "GET") {
+      const status = this.deviceManager.getCurrentPort();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(status));
+      return;
+    }
+
+    // POST /api/port - Change serial port
+    if (path === "port" && method === "POST") {
+      try {
+        const body = await this.parseBody(req);
+        if (!body.port) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "port required" }));
+          return;
+        }
+        await this.deviceManager.setPort(body.port);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", port: body.port }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // POST /api/reconnect - Force reconnection
+    if (path === "reconnect" && method === "POST") {
+      try {
+        await this.deviceManager.reconnect();
+        const status = this.deviceManager.getCurrentPort();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", ...status }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // === End Device Management ===
 
     // GET /api/debug/stats - Command statistics for QA analysis
     if (path === "debug/stats" && method === "GET") {

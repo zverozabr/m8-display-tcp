@@ -348,6 +348,32 @@ export class M8Connection {
   getPort(): string {
     return this.options.port;
   }
+
+  /**
+   * Set serial port path (for dynamic device switching)
+   * Call disconnect() before setPort(), then connect() after
+   */
+  setPort(port: string): void {
+    this.options.port = port;
+  }
+
+  /**
+   * Get auto-reconnect setting
+   */
+  getAutoReconnect(): boolean {
+    return this.options.autoReconnect;
+  }
+
+  /**
+   * Enable/disable auto-reconnect
+   * Useful when switching ports to prevent interference
+   */
+  setAutoReconnect(enabled: boolean): void {
+    this.options.autoReconnect = enabled;
+    if (!enabled) {
+      this.stopReconnectLoop();
+    }
+  }
 }
 
 /**

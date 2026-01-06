@@ -52,6 +52,37 @@
         }
         #reset-btn.loading { opacity: 0.5; cursor: wait; }
 
+        /* Device selector */
+        #device-panel {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            margin-left: 10px;
+            padding-left: 10px;
+            border-left: 1px solid #333;
+        }
+        #port-select {
+            background: #222;
+            color: #888;
+            border: 1px solid #444;
+            padding: 3px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            max-width: 140px;
+        }
+        #port-select option { background: #222; }
+        #reconnect-btn {
+            padding: 4px 8px;
+            background: #222;
+            border: 1px solid #444;
+            color: #888;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        #reconnect-btn:hover { background: #333; }
+        #reconnect-btn.loading { opacity: 0.5; cursor: wait; }
+
         /* M8 Screen Canvas */
         #screen-container {
             background: #000;
@@ -122,6 +153,12 @@
         <span id="status" class="disconnected">⚫</span>
         <button id="audio-btn" onclick="toggleAudio()">🔇</button>
         <button id="reset-btn" onclick="resetUsb()">🔄</button>
+        <div id="device-panel">
+            <select id="port-select" onchange="changePort(this.value)">
+                <option value="">Select device...</option>
+            </select>
+            <button id="reconnect-btn" onclick="reconnectDevice()">↻</button>
+        </div>
     </div>
 
     <div id="screen-container">
@@ -386,6 +423,82 @@
             resetBtn.classList.remove('loading');
         }
 
+        // Device Management
+        async function loadPorts() {
+            try {
+                const res = await fetch('/api/ports');
+                const { ports } = await res.json();
+                const select = document.getElementById('port-select');
+                const currentPort = select.value;
+                select.innerHTML = '<option value="">Select device...</option>';
+                ports.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.path;
+                    opt.textContent = `${p.path}${p.isM8 ? ' [M8]' : ''}`;
+                    if (p.path === currentPort) opt.selected = true;
+                    select.appendChild(opt);
+                });
+            } catch (e) {
+                console.error('Failed to load ports:', e);
+            }
+        }
+
+        async function changePort(port) {
+            if (!port) return;
+            const btn = document.getElementById('reconnect-btn');
+            btn.classList.add('loading');
+            btn.textContent = '⏳';
+            try {
+                const res = await fetch('/api/port', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ port })
+                });
+                const data = await res.json();
+                btn.textContent = data.status === 'ok' ? '✅' : '❌';
+                updateDeviceStatus();
+            } catch (e) {
+                btn.textContent = '❌';
+                console.error('Failed to change port:', e);
+            }
+            setTimeout(() => { btn.textContent = '↻'; btn.classList.remove('loading'); }, 1500);
+        }
+
+        async function reconnectDevice() {
+            const btn = document.getElementById('reconnect-btn');
+            btn.classList.add('loading');
+            btn.textContent = '⏳';
+            try {
+                const res = await fetch('/api/reconnect', { method: 'POST' });
+                const data = await res.json();
+                btn.textContent = data.connected ? '✅' : '❌';
+                updateDeviceStatus();
+            } catch (e) {
+                btn.textContent = '❌';
+                console.error('Failed to reconnect:', e);
+            }
+            setTimeout(() => { btn.textContent = '↻'; btn.classList.remove('loading'); }, 1500);
+        }
+
+        async function updateDeviceStatus() {
+            try {
+                const res = await fetch('/api/port');
+                const { port, connected } = await res.json();
+                const select = document.getElementById('port-select');
+                if (port && select.value !== port) {
+                    // Update selection to current port
+                    for (const opt of select.options) {
+                        if (opt.value === port) {
+                            opt.selected = true;
+                            break;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to get device status:', e);
+            }
+        }
+
         // Keyboard handling with combo support
         document.addEventListener('keydown', (e) => {
             if (e.repeat) return;
@@ -447,8 +560,12 @@
             btn.addEventListener('touchend', handleUp);
         });
 
-        // Init - connect WebSockets (BMP images rendered via createObjectURL)
+        // Init - connect WebSockets and load device info
         connect();
+        loadPorts();
+        updateDeviceStatus();
+        // Refresh ports every 5 seconds
+        setInterval(loadPorts, 5000);
     </script>
 </body>
 </html>

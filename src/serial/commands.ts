@@ -32,9 +32,14 @@ function readColor(data: Uint8Array, offset: number): Color {
   };
 }
 
+// Static state for RECT commands (like m8c's static rectcmd)
+// When color is omitted, use the last drawn color
+let lastRectColor: Color = { r: 0, g: 0, b: 0 };
+
 /**
  * Parse RECT command (0xFE)
  * Variable length: 5, 8, 9, or 12 bytes
+ * If colors are omitted, use the last drawn color (like m8c)
  */
 function parseRect(data: Uint8Array): RectCommand | null {
   const len = data.length;
@@ -46,22 +51,21 @@ function parseRect(data: Uint8Array): RectCommand | null {
 
   let width = 1;
   let height = 1;
-  let color: Color = { r: 0, g: 0, b: 0 };
 
   if (len === 5) {
-    // Position only, 1x1, use previous color (default black)
+    // Position only, 1x1, use previous color
   } else if (len === 8) {
     // Position + color (1x1)
-    color = readColor(data, 5);
+    lastRectColor = readColor(data, 5);
   } else if (len === 9) {
-    // Position + size
+    // Position + size, use previous color
     width = readU16LE(data, 5);
     height = readU16LE(data, 7);
   } else if (len >= 12) {
     // Full: position + size + color
     width = readU16LE(data, 5);
     height = readU16LE(data, 7);
-    color = readColor(data, 9);
+    lastRectColor = readColor(data, 9);
   }
 
   return {
@@ -70,7 +74,7 @@ function parseRect(data: Uint8Array): RectCommand | null {
     y,
     width,
     height,
-    color,
+    color: { ...lastRectColor }, // Copy to avoid mutation
   };
 }
 

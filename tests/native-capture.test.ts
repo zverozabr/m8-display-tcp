@@ -4,6 +4,10 @@
  *
  * Tests for the native m8-audio-capture tool integration
  * Reference: m8c-src/src/backends/audio_libusb.c
+ *
+ * NOTE: These tests require the native m8-audio-capture binary.
+ * Build with: gcc -o tools/m8-audio-capture tools/m8-audio-capture.c -lusb-1.0
+ * Tests are skipped if the native tool is not found.
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
@@ -17,6 +21,10 @@ import {
 
 // Path to native tool
 const NATIVE_TOOL_PATH = resolve(__dirname, "../tools/m8-audio-capture");
+
+// Skip all tests if native tool not found
+const NATIVE_TOOL_EXISTS = existsSync(NATIVE_TOOL_PATH);
+const describeIfNative = NATIVE_TOOL_EXISTS ? describe : describe.skip;
 
 // Reference fixtures
 const FIXTURES_PATH = resolve(__dirname, "fixtures");
@@ -43,7 +51,7 @@ describe("AUDIO_CONSTANTS", () => {
   });
 });
 
-describe("NativeLibusbCapture", () => {
+describeIfNative("NativeLibusbCapture", () => {
   let capture: NativeLibusbCapture;
   let receivedData: Buffer[] = [];
   let errors: Error[] = [];
@@ -169,7 +177,7 @@ describe("NativeLibusbCapture", () => {
   });
 });
 
-describe("integration: capture real audio", () => {
+describeIfNative("integration: capture real audio", () => {
   it("should capture audio with amplitude > noise floor when synth plays", async () => {
     // This test requires M8 to be connected and playing audio
     // Run manually: bun test tests/native-capture.test.ts --only "capture real audio"

@@ -35,18 +35,21 @@ export type ListPortsFn = () => Promise<PortInfo[]>;
 
 /**
  * Default port listing using serialport library
+ * Filters to only show real USB devices (ttyACM*, ttyUSB*)
  */
 export async function defaultListPorts(): Promise<PortInfo[]> {
   const ports = await SerialPort.list();
-  return ports.map((p) => ({
-    path: p.path,
-    manufacturer: p.manufacturer,
-    vendorId: p.vendorId,
-    productId: p.productId,
-    isM8:
-      p.vendorId === "16c0" &&
-      (p.productId === "048a" || p.productId === "048b"),
-  }));
+  return ports
+    .filter((p) => /ttyACM|ttyUSB/.test(p.path))
+    .map((p) => ({
+      path: p.path,
+      manufacturer: p.manufacturer,
+      vendorId: p.vendorId,
+      productId: p.productId,
+      isM8:
+        p.vendorId === "16c0" &&
+        (p.productId === "048a" || p.productId === "048b"),
+    }));
 }
 
 /**

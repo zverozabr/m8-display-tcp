@@ -38,11 +38,17 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install bun for testing
+RUN npm install -g bun
+
 # Copy node_modules and source from builder
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/tsconfig.json ./
+
+# Copy tests
+COPY tests ./tests
 
 # Expose ports
 # HTTP/WebSocket server

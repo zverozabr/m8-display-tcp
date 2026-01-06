@@ -88,6 +88,37 @@ if (!serialPort) {
 const buffer = new TextBuffer();
 const framebuffer = new Framebuffer();
 
+// Debug statistics for QA analysis
+const debugStats = {
+  textCommands: 0,
+  rectCommands: 0,
+  waveCommands: 0,
+  whiteTextCount: 0,      // TEXT with fg color (248,248,248)
+  smallRects: 0,          // RECT with width or height <= 3 (corner brackets)
+  rectSizes: new Map<string, number>(),  // Count by size
+  fgColors: new Map<string, number>(),   // Count by fg color
+  reset() {
+    this.textCommands = 0;
+    this.rectCommands = 0;
+    this.waveCommands = 0;
+    this.whiteTextCount = 0;
+    this.smallRects = 0;
+    this.rectSizes.clear();
+    this.fgColors.clear();
+  },
+  toJSON() {
+    return {
+      textCommands: this.textCommands,
+      rectCommands: this.rectCommands,
+      waveCommands: this.waveCommands,
+      whiteTextCount: this.whiteTextCount,
+      smallRects: this.smallRects,
+      rectSizes: Object.fromEntries(this.rectSizes),
+      fgColors: Object.fromEntries(this.fgColors),
+    };
+  }
+};
+
 // TCP Proxy (optional)
 let tcpProxy: TcpProxy | null = null;
 const tcpProxyPort = values["tcp-proxy"] ? parseInt(values["tcp-proxy"]) : 0;
@@ -98,20 +129,47 @@ const connection = new M8Connection({
   autoReconnect: config.AUTO_RECONNECT,
   reconnectInterval: config.RECONNECT_INTERVAL,
   onCommand: (cmd: ParsedCommand) => {
-    // Debug: log command types (1% sample)
-    if (Math.random() < 0.01) {
-      console.log(`[Cmd] type=${cmd.type}`);
-    }
-
     // Update text buffer
     if (cmd.type === "text") {
       buffer.applyText(cmd);
       framebuffer.applyText(cmd);
+
+      // Debug: track text commands and colors
+      debugStats.textCommands++;
+      const fgKey = `${cmd.fg.r},${cmd.fg.g},${cmd.fg.b}`;
+      debugStats.fgColors.set(fgKey, (debugStats.fgColors.get(fgKey) || 0) + 1);
+      // Track white foreground (selection highlight)
+      if (cmd.fg.r >= 240 && cmd.fg.g >= 240 && cmd.fg.b >= 240) {
+        debugStats.whiteTextCount++;
+      }
+      // Log first few TEXT commands to see Y coordinates
+      if (debugStats.textCommands <= 30) {
+        console.log(`TEXT #${debugStats.textCommands}: '${cmd.char}' at (${cmd.x},${cmd.y}) fg=${fgKey}`);
+      }
     } else if (cmd.type === "rect") {
       buffer.applyRect(cmd);
       framebuffer.applyRect(cmd);
+
+      // Debug: track rect commands
+      debugStats.rectCommands++;
+      const sizeKey = `${cmd.width}x${cmd.height}`;
+      debugStats.rectSizes.set(sizeKey, (debugStats.rectSizes.get(sizeKey) || 0) + 1);
+      // Track small rects (corner brackets)
+      if (cmd.width <= 3 || cmd.height <= 3) {
+        debugStats.smallRects++;
+      }
+      // Track large rects (potential screen clears)
+      if (cmd.width > 100 || cmd.height > 100) {
+        const colorKey = `${cmd.color.r},${cmd.color.g},${cmd.color.b}`;
+        console.log(`LARGE RECT: ${cmd.x},${cmd.y} ${cmd.width}x${cmd.height} color=${colorKey}`);
+      }
+      // Log gray rects (selection background)
+      if (cmd.color.r === 96 && cmd.color.g === 96 && debugStats.rectCommands <= 50) {
+        console.log(`GRAY_RECT: ${cmd.x},${cmd.y} ${cmd.width}x${cmd.height}`);
+      }
     } else if (cmd.type === "wave") {
       framebuffer.applyWave(cmd);
+      debugStats.waveCommands++;
     }
 
     // Broadcast to WebSocket clients
@@ -123,13 +181,6 @@ const connection = new M8Connection({
 
     // Forward to TCP proxy clients (legacy, for backward compatibility)
     if (tcpProxy) {
-      // Debug: log when we're sending display data
-      if (tcpProxy.getClientCount() > 0 && data.length > 0) {
-        // Only log occasionally to avoid spam
-        if (Math.random() < 0.01) {
-          console.log(`[Debug] onSerialData: ${data.length} bytes, ${tcpProxy.getClientCount()} clients`);
-        }
-      }
       tcpProxy.broadcast(data);
     }
   },
@@ -182,6 +233,8 @@ const server = new M8Server({
   framebuffer,
   // Stream audio to TCP clients (enabled - uses 'A' + length framing)
   onAudioData: tcpProxy ? (data) => tcpProxy!.broadcastAudio(data) : undefined,
+  // Debug statistics for QA analysis
+  getDebugStats: () => debugStats.toJSON(),
 });
 
 // Start server (even if M8 not connected yet)

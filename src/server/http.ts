@@ -44,6 +44,7 @@ export interface M8ServerOptions {
   buffer: TextBuffer;
   framebuffer?: Framebuffer;
   onAudioData?: (data: Buffer) => void; // For TCP audio streaming
+  getDebugStats?: () => object; // Debug statistics callback
 }
 
 interface WebSocketData {
@@ -73,12 +74,14 @@ export class M8Server {
   private healthRoute: ReturnType<typeof createHealthRoute>;
   private screenRoutes: ReturnType<typeof createScreenRoutes>;
   private inputRoutes: ReturnType<typeof createInputRoutes>;
+  private getDebugStats: (() => object) | null;
 
   constructor(options: M8ServerOptions) {
     this.connection = options.connection;
     this.buffer = options.buffer;
     this.framebuffer = options.framebuffer ?? null;
     this.port = options.port ?? 8080;
+    this.getDebugStats = options.getDebugStats ?? null;
     this.stateTracker = new M8StateTracker();
     // Auto-start audio if TCP streaming is enabled
     this.audioStreamer = new UsbAudioStreamer({
@@ -296,6 +299,25 @@ export class M8Server {
     // GET /api/health
     if (path === "health" && method === "GET") {
       this.healthRoute.get(res);
+      return;
+    }
+
+    // GET /api/debug/stats - Command statistics for QA analysis
+    if (path === "debug/stats" && method === "GET") {
+      if (this.getDebugStats) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(this.getDebugStats(), null, 2));
+      } else {
+        res.writeHead(501, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Debug stats not enabled" }));
+      }
+      return;
+    }
+
+    // POST /api/debug/reset - Reset statistics
+    if (path === "debug/reset" && method === "POST") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", message: "Reset via getDebugStats not implemented" }));
       return;
     }
 

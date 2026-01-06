@@ -7,6 +7,7 @@ import { parseArgs } from "util";
 import { M8Connection, findM8Device, listPorts } from "./serial/connection";
 import { TextBuffer } from "./display/buffer";
 import { Framebuffer } from "./display/framebuffer";
+import { DisplayDelta } from "./display/delta";
 import { M8Server } from "./server/http";
 import { TcpProxy } from "./server/tcp-proxy";
 import type { ParsedCommand } from "./state/types";
@@ -87,6 +88,7 @@ if (!serialPort) {
 // Create components
 const buffer = new TextBuffer();
 const framebuffer = new Framebuffer();
+const displayDelta = new DisplayDelta();
 
 // Debug statistics for QA analysis
 const debugStats = {
@@ -107,6 +109,7 @@ const debugStats = {
     this.fgColors.clear();
   },
   toJSON() {
+    const deltaStats = displayDelta.getStats();
     return {
       textCommands: this.textCommands,
       rectCommands: this.rectCommands,
@@ -115,6 +118,12 @@ const debugStats = {
       smallRects: this.smallRects,
       rectSizes: Object.fromEntries(this.rectSizes),
       fgColors: Object.fromEntries(this.fgColors),
+      delta: {
+        sent: deltaStats.sent,
+        skipped: deltaStats.skipped,
+        ratio: deltaStats.ratio.toFixed(2),
+        savings: `${((1 - deltaStats.ratio) * 100).toFixed(0)}%`,
+      },
     };
   }
 };
@@ -172,8 +181,10 @@ const connection = new M8Connection({
       debugStats.waveCommands++;
     }
 
-    // Broadcast to WebSocket clients
-    server.broadcastCommand(cmd);
+    // Delta filtering for WebSocket - skip unchanged commands
+    if (displayDelta.shouldSend(cmd)) {
+      server.broadcastCommand(cmd);
+    }
   },
   onSerialData: (data: Uint8Array) => {
     // Forward raw serial bytes to WebSocket display clients (new)
@@ -186,6 +197,8 @@ const connection = new M8Connection({
   },
   onConnect: async () => {
     console.log("M8 connected");
+    // Reset delta cache on reconnect (client needs full state)
+    displayDelta.reset();
     // Re-enable display after reconnect
     connection.enable().catch(() => {});
 

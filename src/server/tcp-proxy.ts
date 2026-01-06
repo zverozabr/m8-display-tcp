@@ -26,6 +26,7 @@ export interface TcpProxyOptions {
   onConnect?: (clientId: string) => void;
   onDisconnect?: (clientId: string) => void;
   enableAudio?: boolean; // Enable audio streaming to clients
+  batchIntervalMs?: number; // Batch interval for display packets (default: 16ms)
 }
 
 interface ClientInfo {
@@ -36,6 +37,7 @@ interface ClientInfo {
 
 /**
  * TCP Serial Proxy Server
+ * Supports batching for 4G optimization
  */
 export class TcpProxy {
   private server: Server | null = null;
@@ -44,6 +46,13 @@ export class TcpProxy {
   private running = false;
   private audioEnabled = false;
 
+  // Batching for display packets (4G optimization)
+  private batchBuffer: Buffer[] = [];
+  private batchTimer: ReturnType<typeof setTimeout> | null = null;
+  private batchBytes = 0;
+  private batchPackets = 0;
+  private batchSent = 0;
+
   constructor(options: TcpProxyOptions) {
     this.options = {
       port: options.port,
@@ -51,6 +60,7 @@ export class TcpProxy {
       onConnect: options.onConnect ?? (() => {}),
       onDisconnect: options.onDisconnect ?? (() => {}),
       enableAudio: options.enableAudio ?? true,
+      batchIntervalMs: options.batchIntervalMs ?? 5, // 5ms for low latency (was 16ms)
     };
     this.audioEnabled = this.options.enableAudio;
   }
@@ -118,6 +128,7 @@ export class TcpProxy {
   /**
    * Send data to all connected clients (M8 -> clients)
    * Format: 'D' + 2-byte length (BE) + SLIP data
+   * Uses batching to reduce packet count for 4G optimization
    */
   private displayPacketCount = 0;
   private displayLastLog = 0;
@@ -125,28 +136,57 @@ export class TcpProxy {
   broadcast(data: Uint8Array): void {
     if (this.clients.size === 0) return;
 
-    // Log display broadcast stats every 5 seconds
-    this.displayPacketCount++;
-    const now = Date.now();
-    if (now - this.displayLastLog > 5000) {
-      // Log first packet's header for debugging
-      const header = Buffer.allocUnsafe(3);
-      header[0] = DISPLAY_HEADER;  // Should be 0x44 = 'D'
-      header.writeUInt16BE(data.length, 1);
-      console.log(`[TcpProxy] Display: ${this.displayPacketCount} pkts, ${data.length} bytes/pkt, ${this.clients.size} clients, header: ${header[0].toString(16)} ${header[1].toString(16)} ${header[2].toString(16)}`);
-      this.displayPacketCount = 0;
-      this.displayLastLog = now;
-    }
-
     // Create packet: 'D' + length (2 bytes BE) + data
     const packet = Buffer.allocUnsafe(3 + data.length);
     packet[0] = DISPLAY_HEADER;
     packet.writeUInt16BE(data.length, 1);
     Buffer.from(data).copy(packet, 3);
 
+    // Add to batch
+    this.batchBuffer.push(packet);
+    this.batchBytes += packet.length;
+    this.batchPackets++;
+
+    // Start batch timer if not already running
+    if (!this.batchTimer) {
+      this.batchTimer = setTimeout(() => this.flushBatch(), this.options.batchIntervalMs);
+    }
+  }
+
+  /**
+   * Flush batched packets to all clients
+   */
+  private flushBatch(): void {
+    this.batchTimer = null;
+
+    if (this.batchBuffer.length === 0 || this.clients.size === 0) {
+      this.batchBuffer = [];
+      return;
+    }
+
+    // Combine all packets into single buffer
+    const combined = Buffer.concat(this.batchBuffer);
+    const packetCount = this.batchBuffer.length;
+    this.batchBuffer = [];
+    this.batchSent++;
+
+    // Log batch stats every 5 seconds
+    this.displayPacketCount += packetCount;
+    const now = Date.now();
+    if (now - this.displayLastLog > 5000) {
+      const avgPacketsPerBatch = this.batchPackets / Math.max(1, this.batchSent);
+      console.log(`[TcpProxy] Batch: ${this.batchSent} sends, ${this.batchPackets} pkts (${avgPacketsPerBatch.toFixed(1)}/batch), ${this.batchBytes} bytes, ${this.clients.size} clients`);
+      this.batchPackets = 0;
+      this.batchBytes = 0;
+      this.batchSent = 0;
+      this.displayPacketCount = 0;
+      this.displayLastLog = now;
+    }
+
+    // Send combined buffer to all clients
     for (const client of this.clients.values()) {
       try {
-        client.socket.write(packet);
+        client.socket.write(combined);
       } catch (err) {
         console.error(`Error sending to ${client.address}:`, err);
       }
@@ -229,10 +269,28 @@ export class TcpProxy {
   }
 
   /**
+   * Get batch statistics
+   */
+  getBatchStats(): { avgPacketsPerBatch: number; totalBatches: number } {
+    return {
+      avgPacketsPerBatch: this.batchPackets / Math.max(1, this.batchSent),
+      totalBatches: this.batchSent,
+    };
+  }
+
+  /**
    * Stop server
    */
   stop(): Promise<void> {
     return new Promise((resolve) => {
+      // Clear batch timer
+      if (this.batchTimer) {
+        clearTimeout(this.batchTimer);
+        this.batchTimer = null;
+      }
+      // Flush remaining batch
+      this.flushBatch();
+
       if (!this.server) {
         resolve();
         return;

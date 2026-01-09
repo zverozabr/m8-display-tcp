@@ -19,8 +19,8 @@ let serverAvailable = false;
 let ws: WebSocket | null = null;
 
 beforeAll(async () => {
-  // Skip in CI environment
-  if (process.env.CI) {
+  // Skip in CI environment (GitHub Actions sets both CI and GITHUB_ACTIONS)
+  if (process.env.CI || process.env.GITHUB_ACTIONS) {
     console.log("⏭️  Skipping WebSocket tests in CI (no server)");
     return;
   }

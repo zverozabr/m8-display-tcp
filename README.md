@@ -261,3 +261,4 @@ MIT
 
 - [Dirtywave M8](https://dirtywave.com/) - The amazing tracker
 - [m8c](https://github.com/laamaa/m8c) - Original M8 headless client (protocol reference)
+- [M8WebDisplay](https://github.com/derkyjadex/M8WebDisplay) - Web display inspiration and protocol insights

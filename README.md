@@ -2,6 +2,42 @@
 
 Remote display and control server for [Dirtywave M8 Tracker](https://dirtywave.com/). Mirrors the M8 display via USB, enables keyboard/gamepad control through HTTP/WebSocket API, and streams audio to the browser.
 
+---
+
+## System Components
+
+**This server works standalone with the built-in Web UI!** Open `http://localhost:8080` in any browser.
+
+For native display on handheld devices (RG353V, RG351), you also need the client:
+
+| Component | Repository | Description |
+|-----------|------------|-------------|
+| **Server** | [m8-display-tcp](https://github.com/zverozabr/m8-display-tcp) (this repo) | Connects to M8 via USB, serves display/audio/control |
+| **Client** | [m8c-tcp](https://github.com/zverozabr/m8c-tcp) | Native SDL3 client for RG353V, RG351, PC |
+
+```
+                                                 ┌─────────────────┐
+                              ┌─────────────────►│  Browser (Web)  │
+                              │                  └─────────────────┘
+┌─────────────────┐           │
+│ m8-display-tcp  │───────────┤  TCP/WebSocket
+│   (Server)      │           │
+│  PC + M8 USB    │           │                  ┌─────────────────┐
+└─────────────────┘           └─────────────────►│   m8c-tcp       │
+                                                 │  (RG353V/PC)    │
+                                                 └─────────────────┘
+```
+
+**Use cases:**
+- **Web UI only** — Control M8 from any browser (no client needed)
+- **Native handheld** — Run m8c-tcp on RG353V/RG351 while M8 is on server PC
+- **Multiple viewers** — Several clients can connect simultaneously
+- **Remote access** — Music production over LAN or Tailscale VPN
+
+> **Note:** [m8c-tcp](https://github.com/zverozabr/m8c-tcp) client does NOT work without this server running.
+
+---
+
 ## Features
 
 - **Real-time display** - BMP streaming at 10 FPS via WebSocket
@@ -306,4 +342,5 @@ MIT
 
 - [Dirtywave M8](https://dirtywave.com/) - The amazing tracker
 - [m8c](https://github.com/laamaa/m8c) - Original M8 headless client (protocol reference)
+- [m8c-tcp](https://github.com/zverozabr/m8c-tcp) - Companion native client for this server
 - [M8WebDisplay](https://github.com/derkyjadex/M8WebDisplay) - Web display inspiration and protocol insights

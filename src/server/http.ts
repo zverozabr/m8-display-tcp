@@ -503,6 +503,13 @@ export class M8Server {
       return;
     }
 
+    // GET /api/audio/debug - Debug stats for audio data
+    if (path === "audio/debug" && method === "GET") {
+      const stats = this.audioStreamer.hub.getStats();
+      this.json(res, stats);
+      return;
+    }
+
     // POST /api/audio/start
     if (path === "audio/start" && method === "POST") {
       if (this.audioRecorder?.isRecording()) {

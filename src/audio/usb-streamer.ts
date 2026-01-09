@@ -25,7 +25,7 @@ export interface UsbAudioStreamerOptions {
  */
 export class UsbAudioStreamer {
   private capture: IAudioCapture;
-  private hub: AudioHub;
+  public hub: AudioHub;
   private running = false;
   private startPromise: Promise<void> | null = null;
   private autoStart: boolean;

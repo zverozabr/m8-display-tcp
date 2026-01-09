@@ -19,6 +19,8 @@ export class AudioHub {
   private recording = false;
   private audioPacketCount = 0;
   private lastLogTime = 0;
+  private totalPackets = 0;
+  private lastChunk: Buffer | null = null;
 
   constructor(bufferSize = 256 * 1024) {
     this.ringBuffer = new RingBuffer(bufferSize, { allowOverwrite: true });
@@ -67,6 +69,10 @@ export class AudioHub {
   onAudioData(data: Buffer): void {
     // Store in ring buffer (for potential late joiners/catchup)
     this.ringBuffer.push(new Uint8Array(data));
+
+    // Store last chunk for debug analysis
+    this.lastChunk = data;
+    this.totalPackets++;
 
     // Frame: [0x00] + PCM data
     const framed = Buffer.concat([Buffer.from([MSG_AUDIO]), data]);
@@ -187,6 +193,72 @@ export class AudioHub {
       length: this.ringBuffer.length,
       capacity: this.ringBuffer.capacity,
       available: this.ringBuffer.available,
+    };
+  }
+
+  /**
+   * Get audio debug stats - analyze last chunk for signal presence
+   */
+  getStats(): {
+    totalPackets: number;
+    lastChunkSize: number;
+    hasSignal: boolean;
+    minValue: number;
+    maxValue: number;
+    rms: number;
+    clients: number;
+    sampleValues: number[];
+  } {
+    if (!this.lastChunk || this.lastChunk.length === 0) {
+      return {
+        totalPackets: this.totalPackets,
+        lastChunkSize: 0,
+        hasSignal: false,
+        minValue: 0,
+        maxValue: 0,
+        rms: 0,
+        clients: this.clients.size,
+        sampleValues: [],
+      };
+    }
+
+    const data = this.lastChunk;
+
+    // Interpret as signed 16-bit samples (S16_LE)
+    const samples: number[] = [];
+    for (let i = 0; i < Math.min(data.length, 100); i += 2) {
+      if (i + 1 < data.length) {
+        // Little-endian signed 16-bit
+        let sample = data[i] | (data[i + 1] << 8);
+        if (sample > 32767) sample -= 65536;
+        samples.push(sample);
+      }
+    }
+
+    // Calculate stats
+    let min = 32767;
+    let max = -32768;
+    let sumSquares = 0;
+    let hasSignal = false;
+
+    for (const sample of samples) {
+      if (sample !== 0) hasSignal = true;
+      if (sample < min) min = sample;
+      if (sample > max) max = sample;
+      sumSquares += sample * sample;
+    }
+
+    const rms = samples.length > 0 ? Math.sqrt(sumSquares / samples.length) : 0;
+
+    return {
+      totalPackets: this.totalPackets,
+      lastChunkSize: data.length,
+      hasSignal,
+      minValue: min,
+      maxValue: max,
+      rms: Math.round(rms * 100) / 100,
+      clients: this.clients.size,
+      sampleValues: samples.slice(0, 20), // First 20 samples for inspection
     };
   }
 }

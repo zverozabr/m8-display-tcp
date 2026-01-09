@@ -295,9 +295,21 @@
             }
         }
 
-        async function startAudio() {
+        function startAudio() {
             try {
+                // 1. Create AudioContext (synchronous - in click handler stack)
                 audioCtx = new AudioContext({ sampleRate: 44100 });
+                console.log('AudioContext created, state:', audioCtx.state);
+
+                // 2. Resume returns a promise but we don't await - let it resolve async
+                // The key is that resume() is CALLED synchronously in the click handler
+                audioCtx.resume().then(() => {
+                    console.log('AudioContext resumed, state:', audioCtx.state);
+                }).catch(e => {
+                    console.error('Resume failed:', e);
+                });
+
+                // 3. Connect WebSocket immediately (don't wait for resume)
                 audioWs = new WebSocket(`ws://${location.host}/audio`);
                 audioWs.binaryType = 'arraybuffer';
 
@@ -305,34 +317,36 @@
                     audioPlaying = true;
                     audioBtn.textContent = '🔊';
                     audioBtn.classList.add('active');
+                    console.log('Audio WS connected, AudioContext state:', audioCtx.state);
                 };
 
                 audioWs.onmessage = async (e) => {
-                    const data = new Uint8Array(e.data);
-                    if (data.length < 2) return;
+                    try {
+                        const data = new Uint8Array(e.data);
+                        if (data.length < 2) return;
 
-                    const msgType = data[0];
-                    const payload = data.slice(1);
+                        const msgType = data[0];
+                        const payload = data.slice(1);
 
-                    // 0x01 = Control/Error message (JSON)
-                    if (msgType === 0x01) {
-                        try {
-                            const msg = JSON.parse(new TextDecoder().decode(payload));
-                            if (msg.error) {
-                                audioBtn.textContent = '❌';
-                                audioBtn.title = msg.error;
-                                console.error('Audio:', msg.error);
-                            }
-                        } catch { /* ignore parse errors */ }
-                        return;
-                    }
-
-                    // 0x00 = Audio data (PCM)
-                    if (msgType === 0x00) {
-                        if (audioCtx.state === 'suspended') {
-                            await audioCtx.resume();
+                        // 0x01 = Control/Error message (JSON)
+                        if (msgType === 0x01) {
+                            try {
+                                const msg = JSON.parse(new TextDecoder().decode(payload));
+                                if (msg.error) {
+                                    audioBtn.textContent = '❌';
+                                    audioBtn.title = msg.error;
+                                    console.error('Audio:', msg.error);
+                                }
+                            } catch { /* ignore parse errors */ }
+                            return;
                         }
-                        playAudioChunk(payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength));
+
+                        // 0x00 = Audio data (PCM)
+                        if (msgType === 0x00 && audioCtx && audioCtx.state === 'running') {
+                            playAudioChunk(payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength));
+                        }
+                    } catch (err) {
+                        console.error('Audio message error:', err);
                     }
                 };
 
@@ -347,52 +361,65 @@
         let nextPlayTime = 0;
         let partialSample = null;
 
+        let audioDebugCount = 0;
         function playAudioChunk(data) {
-            let chunk = new Uint8Array(data);
+            try {
+                if (!audioCtx || audioCtx.state !== 'running') return;
 
-            // Handle partial samples from previous chunk
-            if (partialSample) {
-                const combined = new Uint8Array(partialSample.length + chunk.length);
-                combined.set(partialSample);
-                combined.set(chunk, partialSample.length);
-                chunk = combined;
-                partialSample = null;
+                let chunk = new Uint8Array(data);
+
+                // Log every 100th chunk
+                if (++audioDebugCount % 100 === 1) {
+                    console.log(`Audio chunk #${audioDebugCount}: ${chunk.length} bytes, nextPlayTime=${nextPlayTime.toFixed(3)}, ctxTime=${audioCtx.currentTime.toFixed(3)}`);
+                }
+
+                // Handle partial samples from previous chunk
+                if (partialSample) {
+                    const combined = new Uint8Array(partialSample.length + chunk.length);
+                    combined.set(partialSample);
+                    combined.set(chunk, partialSample.length);
+                    chunk = combined;
+                    partialSample = null;
+                }
+
+                // Save remainder (stereo S16_LE = 4 bytes per sample frame)
+                const remainder = chunk.length % 4;
+                if (remainder) {
+                    partialSample = chunk.slice(-remainder);
+                    chunk = chunk.slice(0, -remainder);
+                }
+
+                if (!chunk.length || chunk.length < 4) return;
+
+                // Convert to Int16Array (need aligned buffer)
+                const aligned = new ArrayBuffer(chunk.length);
+                new Uint8Array(aligned).set(chunk);
+                const samples = new Int16Array(aligned);
+
+                const numFrames = samples.length / 2; // stereo
+                if (numFrames < 1) return;
+
+                const buffer = audioCtx.createBuffer(2, numFrames, audioCtx.sampleRate);
+                const left = buffer.getChannelData(0);
+                const right = buffer.getChannelData(1);
+
+                for (let i = 0; i < numFrames; i++) {
+                    left[i] = samples[i * 2] / 32768;
+                    right[i] = samples[i * 2 + 1] / 32768;
+                }
+
+                const source = audioCtx.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioCtx.destination);
+
+                // Schedule with proper timing to avoid gaps/glitches
+                const now = audioCtx.currentTime;
+                if (nextPlayTime < now) nextPlayTime = now + 0.05;
+                source.start(nextPlayTime);
+                nextPlayTime += buffer.duration;
+            } catch (err) {
+                console.error('playAudioChunk error:', err);
             }
-
-            // Save remainder (stereo S16_LE = 4 bytes per sample frame)
-            const remainder = chunk.length % 4;
-            if (remainder) {
-                partialSample = chunk.slice(-remainder);
-                chunk = chunk.slice(0, -remainder);
-            }
-
-            if (!chunk.length) return;
-
-            // Convert to Int16Array
-            const samples = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.length / 2);
-            const floats = new Float32Array(samples.length);
-            for (let i = 0; i < samples.length; i++) {
-                floats[i] = samples[i] / 32768;
-            }
-
-            const buffer = audioCtx.createBuffer(2, floats.length / 2, audioCtx.sampleRate);
-            const left = buffer.getChannelData(0);
-            const right = buffer.getChannelData(1);
-
-            for (let i = 0; i < floats.length / 2; i++) {
-                left[i] = floats[i * 2];
-                right[i] = floats[i * 2 + 1];
-            }
-
-            const source = audioCtx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(audioCtx.destination);
-
-            // Schedule with proper timing to avoid gaps/glitches
-            const now = audioCtx.currentTime;
-            if (nextPlayTime < now) nextPlayTime = now + 0.05;
-            source.start(nextPlayTime);
-            nextPlayTime += buffer.duration;
         }
 
         function stopAudio() {

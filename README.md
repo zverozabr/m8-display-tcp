@@ -43,8 +43,53 @@ docker run -d --name m8-display \
 ## Requirements
 
 - Node.js 20+ (or Docker)
-- M8 Tracker connected via USB
+- **M8 Tracker** OR **Teensy 4.1 with [M8 Headless firmware](https://github.com/Dirtywave/M8HeadlessFirmware)**
 - Linux (for native USB audio capture)
+
+### Supported Hardware
+
+| Device | USB VID:PID | Port | Notes |
+|--------|-------------|------|-------|
+| M8 Tracker (hardware) | 16c0:0485 | /dev/ttyACM0 | Original Dirtywave device |
+| Teensy 4.1 (headless) | 16c0:0485 | /dev/ttyACM0 | Requires M8 Headless firmware |
+
+### M8 Headless Firmware
+
+For Teensy 4.1 users:
+1. Download firmware from [M8HeadlessFirmware releases](https://github.com/Dirtywave/M8HeadlessFirmware/releases)
+2. Flash using [Teensy Loader](https://www.pjrc.com/teensy/loader.html)
+3. Insert SD card with M8 file structure
+4. Connect via USB - appears as `/dev/ttyACM0`
+
+### Port Detection
+
+The server auto-detects M8 on USB ports:
+
+```bash
+# List available ports
+npm run setup
+
+# Manual port selection
+npx tsx src/index.ts -p /dev/ttyACM0
+
+# Common port locations:
+# Linux:   /dev/ttyACM0, /dev/ttyACM1
+# macOS:   /dev/tty.usbmodem*
+# Windows: COM3, COM4 (use WSL2 with usbipd)
+```
+
+**Troubleshooting ports:**
+```bash
+# Find M8 device
+lsusb | grep "16c0:0485"
+
+# Check serial ports
+ls -la /dev/ttyACM*
+
+# Add user to dialout group (Linux)
+sudo usermod -a -G dialout $USER
+# Logout/login required
+```
 
 ## Installation
 

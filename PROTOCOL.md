@@ -180,8 +180,8 @@ Server → Client: [0x44, 0x00, 0x15, <21 bytes SLIP data>]
 
 ## Reference Implementation
 
-- **Server**: [m8-display](https://github.com/YOUR_USERNAME/m8-display) (TypeScript/Node.js)
-- **Client**: [m8c-tcp](https://github.com/YOUR_USERNAME/m8c-tcp) (C/SDL3)
+- **Server**: [m8-display](https://github.com/zverozabr/m8-display-tcp) (TypeScript/Node.js)
+- **Client**: [m8c-tcp](https://github.com/zverozabr/m8c-tcp) (C/SDL3)
 
 ## Version History
 

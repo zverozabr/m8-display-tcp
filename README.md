@@ -16,7 +16,7 @@ Remote display and control server for [Dirtywave M8 Tracker](https://dirtywave.c
 
 ```bash
 # 1. Install
-git clone https://github.com/YOUR_USERNAME/m8-display.git
+git clone https://github.com/zverozabr/m8-display-tcp.git
 cd m8-display && npm install
 
 # 2. Check system (diagnoses issues, shows suggestions)
@@ -124,7 +124,7 @@ Find your device: `ls -la /dev/ttyACM*` or `lsusb | grep 16c0`
 
 ### TCP Protocol (Port 3333)
 
-For native clients like [m8c-tcp](https://github.com/YOUR_USERNAME/m8c-tcp):
+For native clients like [m8c-tcp](https://github.com/zverozabr/m8c-tcp):
 
 ```
 Display Packet: 'D' + 2-byte length (BE) + SLIP data

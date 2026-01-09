@@ -1,8 +1,25 @@
 {
   "name": "m8-display",
   "version": "1.0.0",
+  "description": "Remote M8 Tracker display server with HTTP API, WebSocket streaming, and browser UI",
   "type": "module",
-  "private": true,
+  "license": "MIT",
+  "author": "Alexander Prilipko <alexander.prilipko@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zverozabr/m8-display-tcp.git"
+  },
+  "homepage": "https://github.com/zverozabr/m8-display-tcp#readme",
+  "keywords": [
+    "m8",
+    "tracker",
+    "dirtywave",
+    "music",
+    "sequencer",
+    "midi",
+    "synth",
+    "headless"
+  ],
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",

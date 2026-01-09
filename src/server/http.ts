@@ -17,24 +17,12 @@ import type { ParsedCommand, M8Screen } from "../state/types";
 import { M8StateTracker } from "../state/tracker";
 import { AudioRecorder, getAudioDevices, findM8AudioDevice } from "../audio/capture";
 import { UsbAudioStreamer } from "../audio/usb-streamer";
-import {
-  resetM8Usb,
-  resetLevel1,
-  resetLevel2,
-  resetLevel3,
-  resetLevel4_D3cold,
-  resetLevel5_MultiCycle,
-  resetLevel6_RuntimePM,
-  forceHardReset,
-  resetAllControllers,
-  ultimateReset,
-  getM8UsbInfo,
-  type ResetResult
-} from "../usb/reset";
 import { spawn } from "child_process";
 import { createHealthRoute } from "./routes/health";
 import { createScreenRoutes } from "./routes/screen";
 import { createInputRoutes } from "./routes/input";
+import { createUsbRoutes } from "./routes/usb";
+import { setCorsHeaders, parseBody } from "./helpers";
 
 // Get directory of this file for static serving
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -75,6 +63,7 @@ export class M8Server {
   private healthRoute: ReturnType<typeof createHealthRoute>;
   private screenRoutes: ReturnType<typeof createScreenRoutes>;
   private inputRoutes: ReturnType<typeof createInputRoutes>;
+  private usbRoutes: ReturnType<typeof createUsbRoutes>;
   private getDebugStats: (() => object) | null;
   private deviceManager: DeviceManager;
 
@@ -104,6 +93,34 @@ export class M8Server {
     this.inputRoutes = createInputRoutes({
       connection: this.connection,
       stateTracker: this.stateTracker,
+    });
+    this.usbRoutes = createUsbRoutes();
+  }
+
+  /**
+   * Register WebSocket client with standard error/close handlers (DRY)
+   */
+  private registerWSClient(
+    ws: WebSocket,
+    clients: Set<WebSocket>,
+    clientType: string,
+    onMessage?: (msg: string) => void
+  ): void {
+    clients.add(ws);
+    console.log(`${clientType} client connected`);
+
+    ws.on("error", (err) => {
+      console.error(`${clientType} client error:`, err.message);
+      clients.delete(ws);
+    });
+
+    if (onMessage) {
+      ws.on("message", (message) => onMessage(message.toString()));
+    }
+
+    ws.on("close", () => {
+      console.log(`${clientType} client disconnected`);
+      clients.delete(ws);
     });
   }
 
@@ -139,50 +156,21 @@ export class M8Server {
 
       // Display streaming WebSocket (raw SLIP frames for m8c-websocket)
       if (path === "/display") {
-        console.log("Display client connected");
-        this.displayClients.add(ws);
-        ws.on("error", (err) => {
-          console.error("Display client error:", err.message);
-          this.displayClients.delete(ws);
-        });
-        ws.on("close", () => {
-          console.log("Display client disconnected");
-          this.displayClients.delete(ws);
-        });
+        this.registerWSClient(ws, this.displayClients, "Display");
         return;
       }
 
       // Control WebSocket (input only - JSON messages)
       if (path === "/control") {
-        console.log("Control client connected");
-        this.controlClients.add(ws);
-        ws.on("error", (err) => {
-          console.error("Control client error:", err.message);
-          this.controlClients.delete(ws);
-        });
-        ws.on("message", (message) => {
-          this.handleWsMessage(ws, message.toString());
-        });
-        ws.on("close", () => {
-          console.log("Control client disconnected");
-          this.controlClients.delete(ws);
-        });
+        this.registerWSClient(ws, this.controlClients, "Control",
+          (msg) => this.handleWsMessage(ws, msg));
         return;
       }
 
-      // Screen WebSocket (JPEG images at 10 FPS)
+      // Screen WebSocket (BMP images at 10 FPS)
       if (path === "/screen") {
-        console.log("Screen client connected (JPEG mode)");
-        this.screenClients.add(ws);
         ws.binaryType = "nodebuffer";
-        ws.on("error", (err) => {
-          console.error("Screen client error:", err.message);
-          this.screenClients.delete(ws);
-        });
-        ws.on("close", () => {
-          console.log("Screen client disconnected");
-          this.screenClients.delete(ws);
-        });
+        this.registerWSClient(ws, this.screenClients, "Screen");
         return;
       }
 
@@ -252,10 +240,8 @@ export class M8Server {
     const url = new URL(req.url || "/", `http://localhost:${this.port}`);
     const path = url.pathname;
 
-    // CORS headers
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    // CORS headers (DRY - using helper)
+    setCorsHeaders(res);
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -537,94 +523,14 @@ export class M8Server {
 
     // GET /api/usb/info - USB device info
     if (path === "usb/info" && method === "GET") {
-      const info = await getM8UsbInfo();
-      this.json(res, info || { error: "M8 not found" }, info ? 200 : 404);
+      await this.usbRoutes.getInfo(res);
       return;
     }
 
-    // POST /api/usb/reset - Auto-escalating reset (levels 1→2→3)
-    if (path === "usb/reset" && method === "POST") {
-      const result = await resetM8Usb(1, 3);
-      this.json(res, result, result.success ? 200 : 500);
-      return;
-    }
-
-    // POST /api/usb/reset/1 - Level 1 (soft, authorized only)
-    if (path === "usb/reset/1" && method === "POST") {
-      const result = await resetLevel1(1000);
-      this.json(res, result, result.success ? 200 : 500);
-      return;
-    }
-
-    // POST /api/usb/reset/2 - Level 2 (remove + rescan)
-    if (path === "usb/reset/2" && method === "POST") {
-      const result = await resetLevel2(2000);
-      this.json(res, result, result.success ? 200 : 500);
-      return;
-    }
-
-    // POST /api/usb/reset/3 - Level 3 (xhci unbind/rebind - HARD)
-    if (path === "usb/reset/3" && method === "POST") {
-      const result = await resetLevel3(5000);
-      this.json(res, result, result.success ? 200 : 500);
-      return;
-    }
-
-    // POST /api/usb/reset/force - Force hard reset with 10s delay
-    if (path === "usb/reset/force" && method === "POST") {
-      const body = await this.parseBody(req) as { delayMs?: number };
-      const delayMs = body.delayMs || 10000;
-      const result = await forceHardReset(delayMs);
-      this.json(res, result, result.success ? 200 : 500);
-      return;
-    }
-
-    // POST /api/usb/reset/nuclear - Reset ALL USB controllers (15s+ delay)
-    // WARNING: Will disconnect ALL USB devices temporarily!
-    if (path === "usb/reset/nuclear" && method === "POST") {
-      const body = await this.parseBody(req) as { delayMs?: number };
-      const delayMs = body.delayMs || 15000;
-      const result = await resetAllControllers(delayMs);
-      this.json(res, result, result.success ? 200 : 500);
-      return;
-    }
-
-    // POST /api/usb/reset/d3cold - Level 4: PCI D3cold state
-    // Forces PCI device into deepest power state (needs 60s+ for reliable recovery)
-    if (path === "usb/reset/d3cold" && method === "POST") {
-      const body = await this.parseBody(req) as { delayMs?: number };
-      const delayMs = body.delayMs || 60000;
-      const result = await resetLevel4_D3cold(delayMs);
-      this.json(res, result, result.success ? 200 : 500);
-      return;
-    }
-
-    // POST /api/usb/reset/multi - Level 5: Multiple cycles
-    // Try multiple reset cycles with increasing delays
-    if (path === "usb/reset/multi" && method === "POST") {
-      const body = await this.parseBody(req) as { cycles?: number; delayMs?: number };
-      const cycles = body.cycles || 3;
-      const delayMs = body.delayMs || 30000;
-      const result = await resetLevel5_MultiCycle(cycles, delayMs);
-      this.json(res, result, result.success ? 200 : 500);
-      return;
-    }
-
-    // POST /api/usb/reset/pm - Level 6: Runtime PM manipulation
-    if (path === "usb/reset/pm" && method === "POST") {
-      const body = await this.parseBody(req) as { delayMs?: number };
-      const delayMs = body.delayMs || 10000;
-      const result = await resetLevel6_RuntimePM(delayMs);
-      this.json(res, result, result.success ? 200 : 500);
-      return;
-    }
-
-    // POST /api/usb/reset/ultimate - Try EVERYTHING
-    // Last resort before physical unplug
-    if (path === "usb/reset/ultimate" && method === "POST") {
-      const result = await ultimateReset();
-      this.json(res, result, result.success ? 200 : 500);
-      return;
+    // USB reset routes (DRY - using route table)
+    if (path.startsWith("usb/reset") && method === "POST") {
+      const handled = await this.usbRoutes.handleReset(req, res, path);
+      if (handled) return;
     }
 
     // GET /api/audio/record?duration=N
